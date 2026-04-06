@@ -9,8 +9,36 @@ import sys
 import threading
 import webbrowser
 import json
+import subprocess
 from datetime import datetime
 from tkinter import messagebox
+from PIL import Image
+
+try:
+    from pygments import highlight
+    from pygments.lexers import get_lexer_for_filename, get_lexer_by_name
+    from pygments.formatter import Formatter
+    HAS_PYGMENTS = True
+except ImportError:
+    HAS_PYGMENTS = False
+
+class TkinterFormatter(Formatter):
+    """Custom Pygments formatter for Tkinter Text tags."""
+    def __init__(self, **options):
+        super().__init__(**options)
+        self.tag_map = {
+            'Token.Keyword': '#ff79c6',
+            'Token.Name.Function': '#50fa7b',
+            'Token.Name.Class': '#50fa7b',
+            'Token.String': '#f1fa8c',
+            'Token.Comment': '#6272a4',
+            'Token.Operator': '#ff79c6',
+            'Token.Number': '#bd93f9',
+            'Token.Name.Builtin': '#8be9fd',
+        }
+
+    def format(self, tokensource, outfile):
+        return list(tokensource)
 
 # Ensure imports work from any CWD
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -28,7 +56,7 @@ class ApprovalWidget(ctk.CTkFrame):
     Inline approval widget that replaces Windows popups.
     Shows the command/content, lets user edit it, then approve or deny.
     """
-    def __init__(self, master, title: str, content: str, on_result, editable=True, **kwargs):
+    def __init__(self, master, title: str, content: str, on_result, editable=True, filepath=None, **kwargs):
         super().__init__(master, fg_color="#1e293b", corner_radius=8, border_width=2,
                          border_color="#f59e0b", **kwargs)
 
@@ -36,6 +64,7 @@ class ApprovalWidget(ctk.CTkFrame):
         self._approved = False
         self._edited_content = content
         self._on_result = on_result
+        self._filepath = filepath
 
         # Title bar
         title_frame = ctk.CTkFrame(self, fg_color="#f59e0b", corner_radius=0, height=30)
@@ -44,15 +73,23 @@ class ApprovalWidget(ctk.CTkFrame):
                      font=ctk.CTkFont(size=12, weight="bold"),
                      text_color="#000000").pack(side="left", padx=10, pady=4)
 
+        if filepath:
+             ctk.CTkLabel(title_frame, text=os.path.basename(filepath),
+                          font=ctk.CTkFont(size=11),
+                          text_color="#334155").pack(side="right", padx=10)
+
         # Editable content area
-        self.text_area = ctk.CTkTextbox(self, height=120,
+        self.text_area = ctk.CTkTextbox(self, height=180,
                                          font=ctk.CTkFont(family="Consolas", size=11),
                                          fg_color="#0f172a", text_color="#e2e8f0",
-                                         wrap="word")
+                                         wrap="none")
         self.text_area.pack(fill="both", expand=True, padx=8, pady=(8, 4))
         self.text_area.insert("0.0", content)
         if not editable:
             self.text_area.configure(state="disabled")
+
+        if HAS_PYGMENTS:
+            self._apply_highlighting(content)
 
         # Buttons
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -68,9 +105,50 @@ class ApprovalWidget(ctk.CTkFrame):
                       font=ctk.CTkFont(weight="bold"),
                       command=self._deny).pack(side="left")
 
+        if filepath:
+            ctk.CTkButton(btn_frame, text="📂 Open", width=70, height=32,
+                          fg_color="#334155", hover_color="#475569",
+                          command=self._open_file).pack(side="left", padx=8)
+
         if editable:
-            ctk.CTkLabel(btn_frame, text="(you can edit above before approving)",
+            ctk.CTkLabel(btn_frame, text="(edit before approving)",
                          text_color="#6c757d", font=ctk.CTkFont(size=10)).pack(side="right")
+
+    def _apply_highlighting(self, content):
+        lexer = None
+        if self._filepath:
+            try: lexer = get_lexer_for_filename(self._filepath)
+            except: pass
+        if not lexer:
+            lexer = get_lexer_by_name("python") # default
+
+        formatter = TkinterFormatter()
+        tokens = formatter.format(lexer.get_tokens(content), None)
+
+        # Apply tags
+        for tag, color in formatter.tag_map.items():
+            self.text_area._textbox.tag_configure(tag, foreground=color)
+
+        idx = "1.0"
+        for ttype, value in tokens:
+            tname = str(ttype)
+            start = idx
+            lines = value.split("\n")
+            if len(lines) > 1:
+                row, col = map(int, idx.split("."))
+                end = f"{row + len(lines) - 1}.{len(lines[-1])}"
+            else:
+                row, col = map(int, idx.split("."))
+                end = f"{row}.{col + len(value)}"
+
+            if tname in formatter.tag_map:
+                self.text_area._textbox.tag_add(tname, start, end)
+            idx = end
+
+    def _open_file(self):
+        if self._filepath and os.path.exists(self._filepath):
+            os.startfile(os.path.dirname(self._filepath))
+            os.startfile(self._filepath)
 
     def _approve(self):
         self._edited_content = self.text_area.get("0.0", "end").strip()
@@ -142,7 +220,7 @@ class ReadyDualLLM(ctk.CTk):
         self.auto_approve = self.engine.config.get("auto_approve", False)
 
         # Window
-        self.title("⚡ Ready Dual LLM")
+        self.title("⚡ ReadyAI Agent")
         self.geometry("1200x750")
         self.minsize(900, 550)
 
@@ -168,25 +246,35 @@ class ReadyDualLLM(ctk.CTk):
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         self.sidebar.grid_rowconfigure(5, weight=1)
 
-        ctk.CTkLabel(self.sidebar, text="⚡ Ready\nDual LLM",
-                     font=ctk.CTkFont(size=18, weight="bold"),
-                     text_color="#e94560").grid(row=0, column=0, padx=20, pady=(25, 5))
+        # Logo
+        logo_path = os.path.join(SCRIPT_DIR, "assets", "logo.png")
+        if os.path.exists(logo_path):
+            img = Image.open(logo_path)
+            self.logo_img = ctk.CTkImage(light_image=img, dark_image=img, size=(64, 64))
+            ctk.CTkLabel(self.sidebar, text="", image=self.logo_img).grid(row=0, column=0, padx=20, pady=(25, 0))
+            ctk.CTkLabel(self.sidebar, text="ReadyAI Agent",
+                         font=ctk.CTkFont(size=18, weight="bold"),
+                         text_color="#e94560").grid(row=1, column=0, padx=20, pady=(5, 5))
+        else:
+            ctk.CTkLabel(self.sidebar, text="⚡ ReadyAI\nAgent",
+                         font=ctk.CTkFont(size=18, weight="bold"),
+                         text_color="#e94560").grid(row=0, column=0, padx=20, pady=(25, 5))
 
         ctk.CTkLabel(self.sidebar, text="Strategic Console",
                      font=ctk.CTkFont(size=10),
-                     text_color="#6c757d").grid(row=1, column=0, padx=20, pady=(0, 15))
+                     text_color="#6c757d").grid(row=2, column=0, padx=20, pady=(0, 15))
 
         ctk.CTkButton(self.sidebar, text="⟳  New Session", command=self.new_session,
                       fg_color="#16213e", hover_color="#0f3460",
-                      anchor="w").grid(row=2, column=0, padx=15, pady=5, sticky="ew")
+                      anchor="w").grid(row=3, column=0, padx=15, pady=5, sticky="ew")
 
         ctk.CTkButton(self.sidebar, text="⚙  Settings", command=self.open_settings,
                       fg_color="#16213e", hover_color="#0f3460",
-                      anchor="w").grid(row=3, column=0, padx=15, pady=5, sticky="ew")
+                      anchor="w").grid(row=4, column=0, padx=15, pady=5, sticky="ew")
 
         ctk.CTkButton(self.sidebar, text="📋  Tool Guide", command=self.show_tool_guide,
                       fg_color="#16213e", hover_color="#0f3460",
-                      anchor="w").grid(row=4, column=0, padx=15, pady=5, sticky="ew")
+                      anchor="w").grid(row=5, column=0, padx=15, pady=5, sticky="ew")
 
         # Theme
         ctk.CTkLabel(self.sidebar, text="Theme", text_color="#6c757d",
@@ -342,7 +430,7 @@ class ReadyDualLLM(ctk.CTk):
     # ============================================================
     # INLINE APPROVAL (replaces Windows popups)
     # ============================================================
-    def _request_approval(self, title: str, content: str, editable: bool = True) -> tuple:
+    def _request_approval(self, title: str, content: str, editable: bool = True, filepath=None) -> tuple:
         """
         Shows inline approval widget. Blocks engine thread until user responds.
         Returns (approved: bool, edited_content: str)
@@ -364,7 +452,8 @@ class ReadyDualLLM(ctk.CTk):
                 title=title,
                 content=content,
                 on_result=on_result,
-                editable=editable
+                editable=editable,
+                filepath=filepath
             )
             widget.pack(fill="x", pady=(5, 5))
 
@@ -381,16 +470,10 @@ class ReadyDualLLM(ctk.CTk):
 
     def _approve_write(self, filepath: str, content: str) -> tuple:
         """Write approval callback. Returns (approved, edited_content)."""
-        display = f"FILE: {filepath}\n{'─' * 40}\n{content}"
         approved, edited = self._request_approval(
-            f"FILE WRITE: {os.path.basename(filepath)}", display, editable=True
+            "FILE WRITE REQUEST", content, editable=True, filepath=filepath
         )
-        if approved:
-            # Extract content after the separator line
-            parts = edited.split('─' * 40, 1)
-            actual_content = parts[1].strip() if len(parts) > 1 else edited
-            return True, actual_content
-        return False, ""
+        return approved, edited
 
     # ============================================================
     # ACTIONS
