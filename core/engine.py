@@ -41,6 +41,7 @@ class Engine:
         self._max_duplicate_calls = 2     # If same tool+args called this many times, STOP
         self._cancel_flag = False         # UI can set this to abort
         self._terminal_approve_fn = None  # Callback for terminal approval
+        self._write_approve_fn = None     # Callback for write approval
 
     # ----------------------------------------------------------------
     # Cancellation
@@ -77,17 +78,18 @@ class Engine:
     # Manager Communication
     # ----------------------------------------------------------------
     def send_to_manager(self, user_input: str, on_chat, on_tool_log, on_status,
-                        on_coder_result=None, terminal_approve_fn=None):
+                        on_coder_result=None, terminal_approve_fn=None,
+                        write_approve_fn=None):
         """
         Send user input to the Manager with full tool loop.
 
         terminal_approve_fn(command: str) -> bool
-            If provided, called BEFORE running any ~@terminal@~ command.
-            Must return True to allow, False to block.
+        write_approve_fn(filepath: str, content: str) -> (bool, str)
         """
         self.manager_history.append({"role": "user", "content": user_input})
         self._cancel_flag = False
         self._terminal_approve_fn = terminal_approve_fn
+        self._write_approve_fn = write_approve_fn
 
         def run():
             on_status("manager", "THINKING...")
@@ -213,6 +215,14 @@ class Engine:
             elif tool_name == "write":
                 filepath, content = parse_write_block(raw_content)
                 on_tool_log(f"  Writing: {filepath}")
+
+                # --- WRITE APPROVAL ---
+                if self._write_approve_fn:
+                    approved, edited_content = self._write_approve_fn(filepath, content)
+                    if not approved:
+                        return "[BLOCKED_BY_USER] Write denied."
+                    content = edited_content
+
                 return self.tools.write(filepath, content)
 
             elif tool_name == "terminal":
@@ -236,6 +246,12 @@ class Engine:
                 task = parse_delegate_block(raw_content)
                 on_tool_log(f"  Delegating to Expert Coder...")
                 return self._delegate_to_coder(task, on_tool_log, on_coder_result)
+
+            elif tool_name == "search":
+                query = raw_content.strip()
+                on_tool_log(f"  Searching: {query}")
+                api_key = self.config.get("brave_api_key", "")
+                return self.tools.web_search(query, api_key)
 
             else:
                 return f"[ERROR] Unknown tool: {tool_name}"

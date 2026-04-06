@@ -1,9 +1,18 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
-*.egg-info/
-dist/
-build/
-.env
-*.log
-new_file.txt
+*.pyd
+
+# Local config (contains API keys)
+config.json
+
+# Tool artifacts
+newfile.txt
+test.txt
+output.txt
+temp_*
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,6 +1,6 @@
 """
-Ready Dual LLM - Strategic AI Orchestration Console
-A premium GUI for dual-LLM workflows with the ~@sigil@~ tool protocol.
+Ready Dual LLM ⚡ - Strategic AI Orchestration Console
+v2: Inline approvals, canvas pane, auto-approve toggle
 """
 
 import customtkinter as ctk
@@ -8,7 +8,9 @@ import os
 import sys
 import threading
 import webbrowser
+import json
 from datetime import datetime
+from tkinter import messagebox
 
 # Ensure imports work from any CWD
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -21,6 +23,113 @@ ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
 
+class ApprovalWidget(ctk.CTkFrame):
+    """
+    Inline approval widget that replaces Windows popups.
+    Shows the command/content, lets user edit it, then approve or deny.
+    """
+    def __init__(self, master, title: str, content: str, on_result, editable=True, **kwargs):
+        super().__init__(master, fg_color="#1e293b", corner_radius=8, border_width=2,
+                         border_color="#f59e0b", **kwargs)
+
+        self._result_event = threading.Event()
+        self._approved = False
+        self._edited_content = content
+        self._on_result = on_result
+
+        # Title bar
+        title_frame = ctk.CTkFrame(self, fg_color="#f59e0b", corner_radius=0, height=30)
+        title_frame.pack(fill="x")
+        ctk.CTkLabel(title_frame, text=f"⚠ {title}",
+                     font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color="#000000").pack(side="left", padx=10, pady=4)
+
+        # Editable content area
+        self.text_area = ctk.CTkTextbox(self, height=120,
+                                         font=ctk.CTkFont(family="Consolas", size=11),
+                                         fg_color="#0f172a", text_color="#e2e8f0",
+                                         wrap="word")
+        self.text_area.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+        self.text_area.insert("0.0", content)
+        if not editable:
+            self.text_area.configure(state="disabled")
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=8, pady=(4, 8))
+
+        ctk.CTkButton(btn_frame, text="✓ Approve", width=100, height=32,
+                      fg_color="#10b981", hover_color="#059669",
+                      font=ctk.CTkFont(weight="bold"),
+                      command=self._approve).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(btn_frame, text="✗ Deny", width=100, height=32,
+                      fg_color="#ef4444", hover_color="#dc2626",
+                      font=ctk.CTkFont(weight="bold"),
+                      command=self._deny).pack(side="left")
+
+        if editable:
+            ctk.CTkLabel(btn_frame, text="(you can edit above before approving)",
+                         text_color="#6c757d", font=ctk.CTkFont(size=10)).pack(side="right")
+
+    def _approve(self):
+        self._edited_content = self.text_area.get("0.0", "end").strip()
+        self._approved = True
+        self._on_result(True, self._edited_content)
+        self.destroy()
+
+    def _deny(self):
+        self._approved = False
+        self._on_result(False, "")
+        self.destroy()
+
+
+class CanvasPane(ctk.CTkFrame):
+    """
+    Canvas/Artifact pane for previewing files, code, and results.
+    Replaces the right side when there's content to display.
+    """
+    def __init__(self, master, on_close, **kwargs):
+        super().__init__(master, corner_radius=12, fg_color="#0f0f23", **kwargs)
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+        # Header with close button
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.grid(row=0, column=0, padx=10, pady=(8, 0), sticky="ew")
+        header.grid_columnconfigure(0, weight=1)
+
+        self.title_label = ctk.CTkLabel(header, text="CANVAS",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color="#818cf8")
+        self.title_label.grid(row=0, column=0, sticky="w", padx=8)
+
+        ctk.CTkButton(header, text="✕", width=30, height=24,
+                      fg_color="#374151", hover_color="#ef4444",
+                      command=on_close).grid(row=0, column=1)
+
+        # Content area
+        self.content = ctk.CTkTextbox(self,
+                                       font=ctk.CTkFont(family="Consolas", size=11),
+                                       fg_color="#0a0a1a",
+                                       text_color="#c4b5fd",
+                                       wrap="word", border_width=0)
+        self.content.grid(row=1, column=0, padx=10, pady=(5, 10), sticky="nsew")
+
+        # File path label
+        self.path_label = ctk.CTkLabel(self, text="", text_color="#6c757d",
+                                        font=ctk.CTkFont(size=10))
+        self.path_label.grid(row=2, column=0, padx=10, pady=(0, 8), sticky="w")
+
+    def show_content(self, title: str, content: str, filepath: str = ""):
+        self.title_label.configure(text=f"CANVAS: {title}")
+        self.content.configure(state="normal")
+        self.content.delete("0.0", "end")
+        self.content.insert("0.0", content)
+        self.content.configure(state="disabled")
+        self.path_label.configure(text=filepath)
+
+
 class ReadyDualLLM(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -29,12 +138,15 @@ class ReadyDualLLM(ctk.CTk):
         config_path = os.path.join(SCRIPT_DIR, "config.json")
         self.engine = Engine(config_path)
 
+        # Settings
+        self.auto_approve = self.engine.config.get("auto_approve", False)
+
         # Window
-        self.title("Ready Dual LLM")
-        self.geometry("1150x720")
+        self.title("⚡ Ready Dual LLM")
+        self.geometry("1200x750")
         self.minsize(900, 550)
 
-        # Layout: sidebar | chat | console
+        # Layout
         self.grid_columnconfigure(0, weight=0, minsize=180)
         self.grid_columnconfigure(1, weight=3)
         self.grid_columnconfigure(2, weight=2)
@@ -45,19 +157,17 @@ class ReadyDualLLM(ctk.CTk):
         self._build_console_pane()
         self._build_status_bar()
 
-        # Focus the input field on start
+        self.canvas_pane = None  # Created on demand
         self.after(100, self.user_input.focus)
 
     # ============================================================
     # SIDEBAR
     # ============================================================
     def _build_sidebar(self):
-        self.sidebar = ctk.CTkFrame(self, width=180, corner_radius=0,
-                                     fg_color="#1a1a2e")
+        self.sidebar = ctk.CTkFrame(self, width=180, corner_radius=0, fg_color="#1a1a2e")
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         self.sidebar.grid_rowconfigure(5, weight=1)
 
-        # Logo
         ctk.CTkLabel(self.sidebar, text="⚡ Ready\nDual LLM",
                      font=ctk.CTkFont(size=18, weight="bold"),
                      text_color="#e94560").grid(row=0, column=0, padx=20, pady=(25, 5))
@@ -66,39 +176,34 @@ class ReadyDualLLM(ctk.CTk):
                      font=ctk.CTkFont(size=10),
                      text_color="#6c757d").grid(row=1, column=0, padx=20, pady=(0, 15))
 
-        # Buttons
-        ctk.CTkButton(self.sidebar, text="⟳  New Session",
-                      command=self.new_session,
+        ctk.CTkButton(self.sidebar, text="⟳  New Session", command=self.new_session,
                       fg_color="#16213e", hover_color="#0f3460",
                       anchor="w").grid(row=2, column=0, padx=15, pady=5, sticky="ew")
 
-        ctk.CTkButton(self.sidebar, text="⚙  Settings",
-                      command=self.open_settings,
+        ctk.CTkButton(self.sidebar, text="⚙  Settings", command=self.open_settings,
                       fg_color="#16213e", hover_color="#0f3460",
                       anchor="w").grid(row=3, column=0, padx=15, pady=5, sticky="ew")
 
-        ctk.CTkButton(self.sidebar, text="📋  Tool Guide",
-                      command=self.show_tool_guide,
+        ctk.CTkButton(self.sidebar, text="📋  Tool Guide", command=self.show_tool_guide,
                       fg_color="#16213e", hover_color="#0f3460",
                       anchor="w").grid(row=4, column=0, padx=15, pady=5, sticky="ew")
 
-        # Theme selector
+        # Theme
         ctk.CTkLabel(self.sidebar, text="Theme", text_color="#6c757d",
                      font=ctk.CTkFont(size=10)).grid(row=6, column=0, padx=15, pady=(10, 0))
         ctk.CTkOptionMenu(self.sidebar, values=["Dark", "Light", "System"],
                           command=lambda v: ctk.set_appearance_mode(v),
                           width=140).grid(row=7, column=0, padx=15, pady=(5, 10))
 
-        # Creator credit
-        credit_btn = ctk.CTkButton(self.sidebar, text="Created by Ali Dheyaa",
-                                    font=ctk.CTkFont(size=10),
-                                    fg_color="transparent", hover_color="#16213e",
-                                    text_color="#6c757d", height=20,
-                                    command=lambda: webbrowser.open("https://www.linkedin.com/in/ali-dheyaa-abdulwahab-6bbbb1239/"))
-        credit_btn.grid(row=8, column=0, padx=15, pady=(5, 12))
+        # Credit
+        ctk.CTkButton(self.sidebar, text="Created by Ali Dheyaa",
+                      font=ctk.CTkFont(size=10), fg_color="transparent",
+                      hover_color="#16213e", text_color="#6c757d", height=20,
+                      command=lambda: webbrowser.open("https://www.linkedin.com/in/ali-dheyaa-abdulwahab-6bbbb1239/")
+                      ).grid(row=8, column=0, padx=15, pady=(5, 12))
 
     # ============================================================
-    # CHAT PANE (Left main area)
+    # CHAT PANE
     # ============================================================
     def _build_chat_pane(self):
         self.chat_frame = ctk.CTkFrame(self, corner_radius=12, fg_color="#0f0f23")
@@ -106,29 +211,29 @@ class ReadyDualLLM(ctk.CTk):
         self.chat_frame.grid_rowconfigure(1, weight=1)
         self.chat_frame.grid_columnconfigure(0, weight=1)
 
-        # Header
         ctk.CTkLabel(self.chat_frame, text="MANAGER CHAT",
                      font=ctk.CTkFont(size=13, weight="bold"),
                      text_color="#e94560").grid(row=0, column=0, padx=18, pady=(12, 5), sticky="w")
 
-        # Chat display
         self.chat_display = ctk.CTkTextbox(self.chat_frame, wrap="word",
                                             font=ctk.CTkFont(family="Segoe UI", size=12),
-                                            fg_color="#0a0a1a",
-                                            text_color="#e0e0e0",
+                                            fg_color="#0a0a1a", text_color="#e0e0e0",
                                             border_width=0)
         self.chat_display.grid(row=1, column=0, padx=10, pady=(5, 10), sticky="nsew")
         self.chat_display.configure(state="disabled")
 
-        # Input area
+        # Approval area (between chat and input)
+        self.approval_container = ctk.CTkFrame(self.chat_frame, fg_color="transparent", height=0)
+        self.approval_container.grid(row=2, column=0, padx=10, pady=0, sticky="ew")
+
+        # Input
         input_frame = ctk.CTkFrame(self.chat_frame, fg_color="transparent")
-        input_frame.grid(row=2, column=0, padx=10, pady=(0, 12), sticky="ew")
+        input_frame.grid(row=3, column=0, padx=10, pady=(0, 12), sticky="ew")
         input_frame.grid_columnconfigure(0, weight=1)
 
         self.user_input = ctk.CTkEntry(input_frame,
                                         placeholder_text="Talk to the Manager...",
-                                        font=ctk.CTkFont(size=12),
-                                        height=38)
+                                        font=ctk.CTkFont(size=12), height=38)
         self.user_input.grid(row=0, column=0, padx=(0, 8), sticky="ew")
         self.user_input.bind("<Return>", lambda e: self.send_message())
 
@@ -136,10 +241,16 @@ class ReadyDualLLM(ctk.CTk):
                                        font=ctk.CTkFont(weight="bold"),
                                        fg_color="#e94560", hover_color="#c81e45",
                                        command=self.send_message)
-        self.send_btn.grid(row=0, column=1)
+        self.send_btn.grid(row=0, column=1, padx=(0, 4))
+
+        self.stop_btn = ctk.CTkButton(input_frame, text="⏹", width=40, height=38,
+                                       font=ctk.CTkFont(size=16),
+                                       fg_color="#6c757d", hover_color="#ef4444",
+                                       command=self.stop_generation)
+        self.stop_btn.grid(row=0, column=2)
 
     # ============================================================
-    # CONSOLE PANE (Right side)
+    # CONSOLE PANE
     # ============================================================
     def _build_console_pane(self):
         self.console_frame = ctk.CTkFrame(self, corner_radius=12, fg_color="#0f0f23")
@@ -147,18 +258,14 @@ class ReadyDualLLM(ctk.CTk):
         self.console_frame.grid_rowconfigure(1, weight=1)
         self.console_frame.grid_columnconfigure(0, weight=1)
 
-        # Header
         ctk.CTkLabel(self.console_frame, text="TOOL CONSOLE",
                      font=ctk.CTkFont(size=13, weight="bold"),
                      text_color="#10b981").grid(row=0, column=0, padx=18, pady=(12, 5), sticky="w")
 
-        # Console display
         self.console_display = ctk.CTkTextbox(self.console_frame,
                                                font=ctk.CTkFont(family="Consolas", size=11),
-                                               fg_color="#0a0a1a",
-                                               text_color="#10b981",
-                                               wrap="word",
-                                               border_width=0)
+                                               fg_color="#0a0a1a", text_color="#10b981",
+                                               wrap="word", border_width=0)
         self.console_display.grid(row=1, column=0, padx=10, pady=(5, 12), sticky="nsew")
         self.console_display.configure(state="disabled")
 
@@ -170,37 +277,53 @@ class ReadyDualLLM(ctk.CTk):
         self.status_bar.grid(row=1, column=0, columnspan=3, sticky="ew")
 
         self.manager_status_label = ctk.CTkLabel(self.status_bar,
-            text="● MANAGER: READY", font=ctk.CTkFont(size=10),
-            text_color="#10b981")
+            text="● MANAGER: READY", font=ctk.CTkFont(size=10), text_color="#10b981")
         self.manager_status_label.pack(side="left", padx=20)
 
         self.coder_status_label = ctk.CTkLabel(self.status_bar,
-            text="● CODER: STANDBY", font=ctk.CTkFont(size=10),
-            text_color="#6c757d")
+            text="● CODER: STANDBY", font=ctk.CTkFont(size=10), text_color="#6c757d")
         self.coder_status_label.pack(side="left", padx=20)
 
-        self.loop_label = ctk.CTkLabel(self.status_bar,
-            text="", font=ctk.CTkFont(size=10),
-            text_color="#6c757d")
-        self.loop_label.pack(side="right", padx=20)
+        # Auto-approve indicator
+        self.auto_label = ctk.CTkLabel(self.status_bar,
+            text="AUTO-APPROVE: ON" if self.auto_approve else "AUTO-APPROVE: OFF",
+            font=ctk.CTkFont(size=10),
+            text_color="#fbbf24" if self.auto_approve else "#6c757d")
+        self.auto_label.pack(side="right", padx=20)
 
     # ============================================================
-    # UI HELPERS (Thread-safe via after())
+    # CANVAS
+    # ============================================================
+    def open_canvas(self, title: str, content: str, filepath: str = ""):
+        if self.canvas_pane:
+            self.canvas_pane.show_content(title, content, filepath)
+            return
+        # Hide console, show canvas in its place
+        self.console_frame.grid_forget()
+        self.canvas_pane = CanvasPane(self, on_close=self.close_canvas)
+        self.canvas_pane.grid(row=0, column=2, padx=(8, 15), pady=15, sticky="nsew")
+        self.canvas_pane.show_content(title, content, filepath)
+
+    def close_canvas(self):
+        if self.canvas_pane:
+            self.canvas_pane.destroy()
+            self.canvas_pane = None
+        self.console_frame.grid(row=0, column=2, padx=(8, 15), pady=15, sticky="nsew")
+
+    # ============================================================
+    # UI HELPERS (Thread-safe)
     # ============================================================
     def _log_chat(self, role: str, text: str):
-        """Thread-safe chat logging."""
         def do():
             prefix = "YOU" if role == "user" else "MANAGER"
-            color = "#64b5f6" if role == "user" else "#ffd54f"
             self.chat_display.configure(state="normal")
-            self.chat_display.insert("end", f"{prefix}:\n", "prefix")
+            self.chat_display.insert("end", f"{prefix}:\n")
             self.chat_display.insert("end", f"{text}\n\n")
             self.chat_display.see("end")
             self.chat_display.configure(state="disabled")
         self.after(0, do)
 
     def _log_console(self, text: str):
-        """Thread-safe console logging."""
         def do():
             ts = datetime.now().strftime("%H:%M:%S")
             self.console_display.configure(state="normal")
@@ -210,13 +333,64 @@ class ReadyDualLLM(ctk.CTk):
         self.after(0, do)
 
     def _set_status(self, role: str, state: str):
-        """Thread-safe status updates."""
         def do():
             label = self.manager_status_label if role == "manager" else self.coder_status_label
-            color = "#10b981" if "READY" in state else "#fbbf24" if "THINK" in state else "#ef4444"
-            display_role = role.upper()
-            label.configure(text=f"● {display_role}: {state}", text_color=color)
+            color = "#10b981" if "READY" in state else "#fbbf24" if "THINK" in state else "#ef4444" if "ERROR" in state else "#f97316"
+            label.configure(text=f"● {role.upper()}: {state}", text_color=color)
         self.after(0, do)
+
+    # ============================================================
+    # INLINE APPROVAL (replaces Windows popups)
+    # ============================================================
+    def _request_approval(self, title: str, content: str, editable: bool = True) -> tuple:
+        """
+        Shows inline approval widget. Blocks engine thread until user responds.
+        Returns (approved: bool, edited_content: str)
+        """
+        if self.auto_approve:
+            return True, content
+
+        result_event = threading.Event()
+        result_data = [False, content]
+
+        def on_result(approved, edited):
+            result_data[0] = approved
+            result_data[1] = edited
+            result_event.set()
+
+        def show():
+            widget = ApprovalWidget(
+                self.approval_container,
+                title=title,
+                content=content,
+                on_result=on_result,
+                editable=editable
+            )
+            widget.pack(fill="x", pady=(5, 5))
+
+        self.after(0, show)
+        result_event.wait(timeout=120)
+        return result_data[0], result_data[1]
+
+    def _approve_terminal(self, command: str) -> bool:
+        """Terminal approval callback for the engine."""
+        approved, edited = self._request_approval(
+            "TERMINAL COMMAND", command, editable=True
+        )
+        return approved
+
+    def _approve_write(self, filepath: str, content: str) -> tuple:
+        """Write approval callback. Returns (approved, edited_content)."""
+        display = f"FILE: {filepath}\n{'─' * 40}\n{content}"
+        approved, edited = self._request_approval(
+            f"FILE WRITE: {os.path.basename(filepath)}", display, editable=True
+        )
+        if approved:
+            # Extract content after the separator line
+            parts = edited.split('─' * 40, 1)
+            actual_content = parts[1].strip() if len(parts) > 1 else edited
+            return True, actual_content
+        return False, ""
 
     # ============================================================
     # ACTIONS
@@ -229,101 +403,118 @@ class ReadyDualLLM(ctk.CTk):
         self.user_input.delete(0, "end")
         self._log_chat("user", msg)
         self._log_console("Manager processing...")
-
-        # Disable send while processing
         self.send_btn.configure(state="disabled")
-
-        def on_done_wrapper(role, text):
-            self._log_chat(role, text)
-            self.after(0, lambda: self.send_btn.configure(state="normal"))
+        self.stop_btn.configure(fg_color="#ef4444")
 
         self.engine.send_to_manager(
             user_input=msg,
             on_chat=lambda role, text: self._log_chat(role, text),
             on_tool_log=lambda text: self._log_console(text),
-            on_status=lambda role, state: self._set_status(role, state),
-            on_coder_result=lambda text: self._log_console(f"[CODER OUTPUT]\n{text[:500]}...")
+            on_status=lambda role, state: self._update_status_and_buttons(role, state),
+            on_coder_result=lambda text: self.after(0, lambda: self.open_canvas("Coder Response", text)),
+            terminal_approve_fn=self._approve_terminal,
+            write_approve_fn=self._approve_write
         )
 
-        # Re-enable send after a safety timeout
-        self.after(5000, lambda: self.send_btn.configure(state="normal"))
+    def _update_status_and_buttons(self, role, state):
+        self._set_status(role, state)
+        if state in ("READY", "ERROR", "STOPPED"):
+            self.after(0, lambda: self.send_btn.configure(state="normal"))
+            self.after(0, lambda: self.stop_btn.configure(fg_color="#6c757d"))
+
+    def stop_generation(self):
+        self.engine.cancel()
+        self._log_console("[USER] Stop requested.")
+        self._set_status("manager", "STOPPING...")
 
     def new_session(self):
         self.engine.reset_session()
         self.chat_display.configure(state="normal")
         self.chat_display.delete("0.0", "end")
         self.chat_display.configure(state="disabled")
-        self._log_console("Session reset. Manager memory cleared.")
+        self._log_console("Session reset.")
 
+    # ============================================================
+    # SETTINGS
+    # ============================================================
     def open_settings(self):
-        """Open a settings dialog for model configuration."""
         dialog = ctk.CTkToplevel(self)
-        dialog.title("Ready Dual LLM - Settings")
-        dialog.geometry("500x400")
+        dialog.title("⚡ Settings")
+        dialog.geometry("520x600")
         dialog.transient(self)
         dialog.grab_set()
 
-        ctk.CTkLabel(dialog, text="Manager API URL:",
-                     font=ctk.CTkFont(weight="bold")).pack(padx=20, pady=(20, 5), anchor="w")
-        mgr_url = ctk.CTkEntry(dialog, width=400)
-        mgr_url.insert(0, self.engine.config['manager']['url'])
-        mgr_url.pack(padx=20)
+        scroll = ctk.CTkScrollableFrame(dialog, width=480, height=500)
+        scroll.pack(fill="both", expand=True, padx=10, pady=10)
 
-        ctk.CTkLabel(dialog, text="Manager Model (or 'auto'):",
-                     font=ctk.CTkFont(weight="bold")).pack(padx=20, pady=(15, 5), anchor="w")
-        mgr_model = ctk.CTkEntry(dialog, width=400)
-        mgr_model.insert(0, self.engine.config['manager']['model'])
-        mgr_model.pack(padx=20)
+        def add_field(parent, label_text, default_val, show=""):
+            ctk.CTkLabel(parent, text=label_text,
+                         font=ctk.CTkFont(weight="bold")).pack(padx=10, pady=(12, 3), anchor="w")
+            entry = ctk.CTkEntry(parent, width=440, show=show if show else None)
+            entry.insert(0, default_val)
+            entry.pack(padx=10)
+            return entry
 
-        ctk.CTkLabel(dialog, text="Coder API URL:",
-                     font=ctk.CTkFont(weight="bold")).pack(padx=20, pady=(15, 5), anchor="w")
-        coder_url = ctk.CTkEntry(dialog, width=400)
-        coder_url.insert(0, self.engine.config['coder']['url'])
-        coder_url.pack(padx=20)
+        ctk.CTkLabel(scroll, text="Both URLs can be the same for single-model mode",
+                     text_color="#6c757d", font=ctk.CTkFont(size=11)).pack(pady=(5, 0))
 
-        ctk.CTkLabel(dialog, text="Coder Model (or 'auto'):",
-                     font=ctk.CTkFont(weight="bold")).pack(padx=20, pady=(15, 5), anchor="w")
-        coder_model = ctk.CTkEntry(dialog, width=400)
-        coder_model.insert(0, self.engine.config['coder']['model'])
-        coder_model.pack(padx=20)
+        mgr_url = add_field(scroll, "Manager API URL:", self.engine.config['manager']['url'])
+        mgr_model = add_field(scroll, "Manager Model (or 'auto'):", self.engine.config['manager']['model'])
+        coder_url = add_field(scroll, "Coder API URL:", self.engine.config['coder']['url'])
+        coder_model = add_field(scroll, "Coder Model (or 'auto'):", self.engine.config['coder']['model'])
+
+        ctk.CTkLabel(scroll, text="━━━━━━━━ Web Search ━━━━━━━━",
+                     text_color="#6c757d").pack(pady=(15, 0))
+        brave_key = add_field(scroll, "Brave Search API Key:", self.engine.config.get('brave_api_key', ''), show="•")
+
+        ctk.CTkLabel(scroll, text="━━━━━━━━ Safety ━━━━━━━━",
+                     text_color="#6c757d").pack(pady=(15, 0))
+
+        auto_var = ctk.BooleanVar(value=self.auto_approve)
+        auto_switch_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        auto_switch_frame.pack(fill="x", padx=10, pady=(10, 0))
+        ctk.CTkLabel(auto_switch_frame, text="Auto-Approve All Actions:",
+                     font=ctk.CTkFont(weight="bold")).pack(side="left")
+        ctk.CTkSwitch(auto_switch_frame, text="", variable=auto_var,
+                      onvalue=True, offvalue=False).pack(side="right", padx=10)
+
+        ctk.CTkLabel(scroll, text="When ON, terminal commands and file writes execute\nwithout asking. Use with caution!",
+                     text_color="#ef4444", font=ctk.CTkFont(size=10)).pack(padx=10, anchor="w")
 
         def save():
             self.engine.config['manager']['url'] = mgr_url.get()
             self.engine.config['manager']['model'] = mgr_model.get()
             self.engine.config['coder']['url'] = coder_url.get()
             self.engine.config['coder']['model'] = coder_model.get()
+            self.engine.config['brave_api_key'] = brave_key.get()
+            self.engine.config['auto_approve'] = auto_var.get()
             self.engine.manager_url = mgr_url.get()
             self.engine.coder_url = coder_url.get()
-            # Persist
-            import json
+            self.auto_approve = auto_var.get()
+            # Update status bar indicator
+            self.auto_label.configure(
+                text="AUTO-APPROVE: ON" if self.auto_approve else "AUTO-APPROVE: OFF",
+                text_color="#fbbf24" if self.auto_approve else "#6c757d"
+            )
             cfg_path = os.path.join(SCRIPT_DIR, "config.json")
             with open(cfg_path, 'w') as f:
                 json.dump(self.engine.config, f, indent=2)
-            self._log_console("Settings saved and applied.")
+            self._log_console("Settings saved.")
             dialog.destroy()
 
         ctk.CTkButton(dialog, text="Save & Apply", fg_color="#e94560",
-                      hover_color="#c81e45", command=save).pack(pady=25)
+                      hover_color="#c81e45", command=save).pack(pady=15)
 
     def show_tool_guide(self):
-        """Show the sigil tool reference."""
         guide = (
             "~@sigil@~ TOOL PROTOCOL\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "~@read@~ filepath ~@exit@~\n"
-            "  → Reads a file\n\n"
-            "~@write@~ filepath\n"
-            "content here\n"
-            "~@exit@~\n"
-            "  → Writes content to file\n\n"
-            "~@terminal@~ command ~@exit@~\n"
-            "  → Runs a shell command\n\n"
-            "~@explorer@~ path ~@exit@~\n"
-            "  → Lists directory contents\n\n"
-            "~@delegate@~ task ~@exit@~\n"
-            "  → Sends task to Expert Coder\n\n"
-            "To MENTION a tool without invoking:\n"
-            "  Wrap in quotes: '~@read@~'\n"
+            "~@read@~ filepath ~@exit@~\n  → Reads a file\n\n"
+            "~@write@~ filepath\\ncontent ~@exit@~\n  → Writes to file (APPROVAL REQUIRED)\n\n"
+            "~@terminal@~ command ~@exit@~\n  → Runs command (APPROVAL REQUIRED)\n\n"
+            "~@explorer@~ path ~@exit@~\n  → Lists directory\n\n"
+            "~@search@~ query ~@exit@~\n  → Web search (Brave)\n\n"
+            "~@delegate@~ task ~@exit@~\n  → Send to Expert Coder\n"
         )
         self._log_console(guide)
 

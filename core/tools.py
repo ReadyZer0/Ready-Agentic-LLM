@@ -6,6 +6,7 @@ Each tool maps directly to a sigil name.
 import os
 import subprocess
 import json
+import requests
 
 
 class Tools:
@@ -86,3 +87,36 @@ class Tools:
             return header + "\n" + "\n".join(lines)
         except Exception as e:
             return f"[ERROR] explorer failed: {e}"
+
+    @staticmethod
+    def web_search(query: str, api_key: str = "") -> str:
+        """~@search@~ handler: Search the web using Brave Search API."""
+        if not api_key:
+            return "[ERROR] No Brave Search API key configured. Add it in Settings."
+        try:
+            headers = {
+                "Accept": "application/json",
+                "Accept-Encoding": "gzip",
+                "X-Subscription-Token": api_key
+            }
+            params = {"q": query, "count": 5}
+            r = requests.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                headers=headers, params=params, timeout=10
+            )
+            r.raise_for_status()
+            data = r.json()
+
+            results = []
+            for item in data.get("web", {}).get("results", [])[:5]:
+                title = item.get("title", "")
+                url = item.get("url", "")
+                desc = item.get("description", "")
+                results.append(f"- {title}\n  {url}\n  {desc}")
+
+            if results:
+                return f"[SEARCH RESULTS for: {query}]\n" + "\n\n".join(results)
+            else:
+                return f"[SEARCH] No results found for: {query}"
+        except Exception as e:
+            return f"[ERROR] search failed: {e}"
