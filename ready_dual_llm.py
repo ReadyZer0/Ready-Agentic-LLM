@@ -12,7 +12,7 @@ import json
 import subprocess
 from datetime import datetime
 from tkinter import messagebox
-from PIL import Image
+from PIL import Image, ImageDraw
 
 try:
     from pygments import highlight
@@ -238,27 +238,64 @@ class ReadyDualLLM(ctk.CTk):
         self.canvas_pane = None  # Created on demand
         self.after(100, self.user_input.focus)
 
+    def create_agent_logo(self, size=256):
+        """Programmatically generates the ReadyAI Agent logo."""
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        
+        # Scale factors
+        s = size / 256
+        
+        # Draw Chip pins (silver)
+        pin_color = "#94a3b8"
+        for i in range(5):
+            # top
+            draw.rectangle([s*(60 + i*35), s*20, s*(75 + i*35), s*45], fill=pin_color)
+            # bottom
+            draw.rectangle([s*(60 + i*35), s*211, s*(75 + i*35), s*236], fill=pin_color)
+            # left
+            draw.rectangle([s*20, s*(60 + i*35), s*45, s*(75 + i*35)], fill=pin_color)
+            # right
+            draw.rectangle([s*211, s*(60 + i*35), s*236, s*(75 + i*35)], fill=pin_color)
+
+        # Draw main chip (Dark Slate)
+        chip_color = "#1e293b"
+        draw.rounded_rectangle([s*40, s*40, s*216, s*216], radius=20*s, fill=chip_color, outline="#334155", width=int(2*s))
+        
+        # Draw Lightning Bolt (Yellow)
+        bolt_color = "#facc15"
+        bolt_coords = [
+            (s*140, s*70), (s*90, s*140), (s*125, s*140),
+            (s*110, s*190), (s*165, s*110), (s*130, s*110),
+            (s*140, s*70)
+        ]
+        draw.polygon(bolt_coords, fill=bolt_color, outline="#854d0e", width=int(s))
+        
+        return img
+
     # ============================================================
     # SIDEBAR
     # ============================================================
     def _build_sidebar(self):
+        # 1. Update window icon (coded logo)
+        try:
+            icon_img = self.create_agent_logo(size=32)
+            self.tk.call('wm', 'iconphoto', self._w, ctk.CTkImage(light_image=icon_img, dark_image=icon_img, size=(32, 32))._light_image)
+        except Exception as e:
+            print(f"Icon error: {e}")
+
         self.sidebar = ctk.CTkFrame(self, width=180, corner_radius=0, fg_color="#1a1a2e")
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         self.sidebar.grid_rowconfigure(5, weight=1)
 
-        # Logo
-        logo_path = os.path.join(SCRIPT_DIR, "assets", "logo.png")
-        if os.path.exists(logo_path):
-            img = Image.open(logo_path)
-            self.logo_img = ctk.CTkImage(light_image=img, dark_image=img, size=(64, 64))
-            ctk.CTkLabel(self.sidebar, text="", image=self.logo_img).grid(row=0, column=0, padx=20, pady=(25, 0))
-            ctk.CTkLabel(self.sidebar, text="ReadyAI Agent",
-                         font=ctk.CTkFont(size=18, weight="bold"),
-                         text_color="#e94560").grid(row=1, column=0, padx=20, pady=(5, 5))
-        else:
-            ctk.CTkLabel(self.sidebar, text="⚡ ReadyAI\nAgent",
-                         font=ctk.CTkFont(size=18, weight="bold"),
-                         text_color="#e94560").grid(row=0, column=0, padx=20, pady=(25, 5))
+        # Logo generated via code
+        img = self.create_agent_logo(size=512) # high res for scaling
+        self.logo_img = ctk.CTkImage(light_image=img, dark_image=img, size=(80, 80))
+        ctk.CTkLabel(self.sidebar, text="", image=self.logo_img).grid(row=0, column=0, padx=20, pady=(25, 0))
+        
+        ctk.CTkLabel(self.sidebar, text="ReadyAI Agent",
+                     font=ctk.CTkFont(size=18, weight="bold"),
+                     text_color="#e94560").grid(row=1, column=0, padx=20, pady=(5, 5))
 
         ctk.CTkLabel(self.sidebar, text="Strategic Console",
                      font=ctk.CTkFont(size=10),
