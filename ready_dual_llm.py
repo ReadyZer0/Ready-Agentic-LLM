@@ -12,7 +12,7 @@ import json
 import subprocess
 from datetime import datetime
 from tkinter import messagebox
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageTk
 
 try:
     from pygments import highlight
@@ -280,7 +280,8 @@ class ReadyDualLLM(ctk.CTk):
         # 1. Update window icon (coded logo)
         try:
             icon_img = self.create_agent_logo(size=32)
-            self.tk.call('wm', 'iconphoto', self._w, ctk.CTkImage(light_image=icon_img, dark_image=icon_img, size=(32, 32))._light_image)
+            self.logo_icon_tk = ImageTk.PhotoImage(icon_img) # Keep reference to avoid GC
+            self.tk.call('wm', 'iconphoto', self._w, self.logo_icon_tk)
         except Exception as e:
             print(f"Icon error: {e}")
 
