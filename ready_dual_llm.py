@@ -287,7 +287,7 @@ class ReadyDualLLM(ctk.CTk):
 
         self.sidebar = ctk.CTkFrame(self, width=180, corner_radius=0, fg_color="#1a1a2e")
         self.sidebar.grid(row=0, column=0, sticky="nsew")
-        self.sidebar.grid_rowconfigure(5, weight=1)
+        self.sidebar.grid_rowconfigure(7, weight=1)
 
         # Logo generated via code
         img = self.create_agent_logo(size=512) # high res for scaling
@@ -314,12 +314,16 @@ class ReadyDualLLM(ctk.CTk):
                       fg_color="#16213e", hover_color="#0f3460",
                       anchor="w").grid(row=5, column=0, padx=15, pady=5, sticky="ew")
 
+        ctk.CTkButton(self.sidebar, text="🏋️  Train Agent", command=self.open_training_ui,
+                      fg_color="#0f766e", hover_color="#0c4a6e",
+                      anchor="w").grid(row=6, column=0, padx=15, pady=5, sticky="ew")
+
         # Theme
         ctk.CTkLabel(self.sidebar, text="Theme", text_color="#6c757d",
-                     font=ctk.CTkFont(size=10)).grid(row=6, column=0, padx=15, pady=(10, 0))
+                     font=ctk.CTkFont(size=10)).grid(row=8, column=0, padx=15, pady=(10, 0))
         ctk.CTkOptionMenu(self.sidebar, values=["Dark", "Light", "System"],
                           command=lambda v: ctk.set_appearance_mode(v),
-                          width=140).grid(row=7, column=0, padx=15, pady=(5, 10))
+                          width=140).grid(row=9, column=0, padx=15, pady=(5, 10))
 
         # Credit
         ctk.CTkButton(self.sidebar, text="Created by Ali Dheyaa",
@@ -638,6 +642,76 @@ class ReadyDualLLM(ctk.CTk):
             "~@delegate@~ task ~@exit@~\n  → Send to Expert Coder\n"
         )
         self._log_console(guide)
+
+    # ============================================================
+    # TRAINING UI
+    # ============================================================
+    def open_training_ui(self):
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("🏋️ Train Agent (LoRA)")
+        dialog.geometry("540x450")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        ctk.CTkLabel(dialog, text="Train your own model with Unsloth!", font=ctk.CTkFont(size=14, weight="bold")).pack(pady=(20, 5))
+        ctk.CTkLabel(dialog, text="This generates a training script. You must have PyTorch and Unsloth installed.", text_color="#ef4444", font=ctk.CTkFont(size=10)).pack(pady=(0, 20))
+
+        frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        frame.pack(fill="x", padx=20)
+        
+        ctk.CTkLabel(frame, text="HF Model ID (safetensors):").pack(anchor="w")
+        model_entry = ctk.CTkEntry(frame, width=480)
+        model_entry.insert(0, "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct")
+        model_entry.pack(pady=(0, 10))
+
+        ctk.CTkLabel(frame, text="Note: GGUF files cannot be directly trained. We use HF format then export.",
+                     text_color="#fbbf24", font=ctk.CTkFont(size=10)).pack(anchor="w", pady=(0, 20))
+
+        def generate_script():
+            model_id = model_entry.get().strip()
+            script_content = f"""# Auto-generated Unsloth Training Script for ReadyAI Agent
+from unsloth import FastLanguageModel
+import torch
+
+# 1. Load Model
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name="{model_id}",
+    max_seq_length=2048,
+    dtype=None,
+    load_in_4bit=True
+)
+
+# 2. Add LoRA Adapters
+model = FastLanguageModel.get_peft_model(
+    model,
+    r=16, # Rank
+    target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    lora_alpha=16,
+    lora_dropout=0,
+    bias="none",
+    use_gradient_checkpointing="unsloth"
+)
+
+print("\\n✅ Model loaded from {model_id} and wrapped for LoRA training.")
+print("👉 TODO: Add your custom SFTTrainer dataset logic here.")
+print("👉 Once trained, use this to export to GGUF:")
+print("   model.save_pretrained_gguf('readyai_agent_model', tokenizer, quantization_method='q4_k_m')\\n")
+"""
+            script_path = os.path.join(SCRIPT_DIR, "train_lora.py")
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write(script_content)
+            
+            self._log_console("Training script 'train_lora.py' generated in workspace.")
+            
+            try:
+                # Open terminal to the workspace directory
+                subprocess.Popen(['cmd.exe', '/c', 'start', 'cmd.exe', '/K', f'cd /d "{SCRIPT_DIR}" && echo Ready to train! Run: python train_lora.py'])
+                self._log_console("Terminal launched. Ensure you are in your Unsloth environment.")
+            except Exception as e:
+                self._log_console(f"Failed to open terminal: {e}")
+            dialog.destroy()
+
+        ctk.CTkButton(dialog, text="Generate & Launch Script", fg_color="#10b981", hover_color="#059669", command=generate_script).pack(pady=30)
 
 
 if __name__ == "__main__":
