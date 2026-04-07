@@ -24,7 +24,7 @@ SYNTHETIC_MEMORY = [
     },
     {
         "role": "user",
-        "content": "[TOOL_RESULT: delegate]\n[CODER_RESPONSE]\nprint('hello world')"
+        "content": "[TOOL_RESULT: delegate]\n[CODER_RESPONSE]\nprint('hello world')\n\n[SYSTEM] Tool executed automatically. If the user's task is fully complete, reply ONLY with 'DONE' and say NOTHING else. If you just received code from the Coder, your VERY NEXT action MUST be to use the ~@write@~ tool to save it."
     },
     {
         "role": "assistant",

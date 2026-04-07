@@ -188,7 +188,10 @@ class Engine:
 
                     if result == "[BLOCKED_BY_USER]":
                         tool_results.append(f"[TOOL_RESULT: {block.tool_name}]\nUser denied this command.")
-                        on_tool_log(f"~@{block.tool_name}@~ BLOCKED by user")
+                        on_tool_log(f"~@{block.tool_name}@~ BLOCKED by user. Aborting loop.")
+                        on_status("manager", "READY")
+                        self._is_manager_running = False
+                        return  # Break entirely out of the run thread!
                     else:
                         tool_results.append(f"[TOOL_RESULT: {block.tool_name}]\n{result}")
                         on_tool_log(f"~@{block.tool_name}@~ completed")
@@ -205,7 +208,7 @@ class Engine:
                 # 7. Feed results back
                 if tool_results:
                     feedback = "\n---\n".join(tool_results)
-                    feedback += "\n\n[SYSTEM] Tool executed automatically. If the user's task is fully complete, reply ONLY with 'DONE' and say NOTHING else. If more tools are needed, use them now."
+                    feedback += "\n\n[SYSTEM] Tool executed automatically. If the user's task is fully complete, reply ONLY with 'DONE' and say NOTHING else. If you just received code from the Coder, your VERY NEXT action MUST be to use the ~@write@~ tool to save it."
                     self.manager_history.append({"role": "user", "content": feedback})
 
             # Hit max loops

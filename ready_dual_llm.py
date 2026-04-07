@@ -580,13 +580,43 @@ class ReadyDualLLM(ctk.CTk):
             entry.pack(padx=10)
             return entry
 
+        def fetch_models(api_url):
+            try:
+                import requests
+                if not api_url.endswith("/v1"):
+                    api_url = api_url.rstrip("/") + "/v1"
+                r = requests.get(f"{api_url}/models", timeout=2)
+                r.raise_for_status()
+                data = r.json()
+                return [m['id'] for m in data.get('data', []) if 'id' in m]
+            except Exception as e:
+                print(f"Fetch models error: {e}")
+                return []
+
+        def add_model_field(parent, label_text, default_val, api_url):
+            ctk.CTkLabel(parent, text=label_text,
+                         font=ctk.CTkFont(weight="bold")).pack(padx=10, pady=(12, 3), anchor="w")
+            models = fetch_models(api_url)
+            if models:
+                if default_val not in models:
+                    models.insert(0, default_val)
+                combo = ctk.CTkOptionMenu(parent, width=440, values=models)
+                combo.set(default_val)
+                combo.pack(padx=10)
+                return combo
+            else:
+                entry = ctk.CTkEntry(parent, width=440)
+                entry.insert(0, default_val)
+                entry.pack(padx=10)
+                return entry
+
         ctk.CTkLabel(scroll, text="Both URLs can be the same for single-model mode",
                      text_color="#6c757d", font=ctk.CTkFont(size=11)).pack(pady=(5, 0))
 
         mgr_url = add_field(scroll, "Manager API URL:", self.engine.config['manager']['url'])
-        mgr_model = add_field(scroll, "Manager Model (or 'auto'):", self.engine.config['manager']['model'])
+        mgr_model = add_model_field(scroll, "Manager Model (or 'auto'):", self.engine.config['manager']['model'], self.engine.config['manager']['url'])
         coder_url = add_field(scroll, "Coder API URL:", self.engine.config['coder']['url'])
-        coder_model = add_field(scroll, "Coder Model (or 'auto'):", self.engine.config['coder']['model'])
+        coder_model = add_model_field(scroll, "Coder Model (or 'auto'):", self.engine.config['coder']['model'], self.engine.config['coder']['url'])
 
         ctk.CTkLabel(scroll, text="━━━━━━━━ Web Search ━━━━━━━━",
                      text_color="#6c757d").pack(pady=(15, 0))
