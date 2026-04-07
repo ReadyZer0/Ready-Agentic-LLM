@@ -11,7 +11,7 @@ import webbrowser
 import json
 import subprocess
 from datetime import datetime
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 from PIL import Image, ImageDraw, ImageTk
 
 try:
@@ -663,12 +663,49 @@ class ReadyDualLLM(ctk.CTk):
         model_entry = ctk.CTkEntry(frame, width=480)
         model_entry.insert(0, "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct")
         model_entry.pack(pady=(0, 10))
+        
+        dataset_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        dataset_frame.pack(fill="x", pady=(0, 15))
+        
+        ctk.CTkLabel(dataset_frame, text="Dataset (.jsonl), Optional:").pack(anchor="w")
+        
+        ds_entry_frame = ctk.CTkFrame(dataset_frame, fg_color="transparent")
+        ds_entry_frame.pack(fill="x")
+        
+        dataset_entry = ctk.CTkEntry(ds_entry_frame)
+        dataset_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        def browse_file():
+            filepath = filedialog.askopenfilename(
+                title="Select Training Dataset",
+                filetypes=(("JSONL Files", "*.jsonl"), ("CSV Files", "*.csv"), ("All Files", "*.*"))
+            )
+            if filepath:
+                dataset_entry.delete(0, "end")
+                dataset_entry.insert(0, filepath)
+                
+        ctk.CTkButton(ds_entry_frame, text="Browse...", width=80, command=browse_file).pack(side="right")
 
         ctk.CTkLabel(frame, text="Note: GGUF files cannot be directly trained. We use HF format then export.",
-                     text_color="#fbbf24", font=ctk.CTkFont(size=10)).pack(anchor="w", pady=(0, 20))
+                     text_color="#fbbf24", font=ctk.CTkFont(size=10)).pack(anchor="w", pady=(0, 10))
 
         def generate_script():
             model_id = model_entry.get().strip()
+            dataset_path = dataset_entry.get().strip()
+            
+            ds_load_code = "print('👉 TODO: Add your custom SFTTrainer dataset logic here.')"
+            if dataset_path:
+                ds_load_code = f"""
+# 3. Load Selected Dataset
+from datasets import load_dataset
+try:
+    dataset = load_dataset('json', data_files='{dataset_path}', split='train')
+    print("\\n✅ Custom dataset '{dataset_path}' successfully loaded! Rows:", len(dataset))
+    print("👉 Now, map your dataset columns to the model inputs inside SFTTrainer.")
+except Exception as e:
+    print("\\n❌ Error loading dataset:", e)
+"""
+
             script_content = f"""# Auto-generated Unsloth Training Script for ReadyAI Agent
 from unsloth import FastLanguageModel
 import torch
@@ -693,8 +730,9 @@ model = FastLanguageModel.get_peft_model(
 )
 
 print("\\n✅ Model loaded from {model_id} and wrapped for LoRA training.")
-print("👉 TODO: Add your custom SFTTrainer dataset logic here.")
-print("👉 Once trained, use this to export to GGUF:")
+{ds_load_code}
+
+print("\\n👉 Once trained, use this to export to GGUF:")
 print("   model.save_pretrained_gguf('readyai_agent_model', tokenizer, quantization_method='q4_k_m')\\n")
 """
             script_path = os.path.join(SCRIPT_DIR, "train_lora.py")
