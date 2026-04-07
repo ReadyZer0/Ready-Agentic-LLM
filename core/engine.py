@@ -167,11 +167,11 @@ class Engine:
                     call_tracker[call_hash] = call_tracker.get(call_hash, 0) + 1
 
                     if call_tracker[call_hash] > self._max_duplicate_calls:
-                        on_tool_log(f"[LOOP DETECTED] <tool name='{block.tool_name}'> called {call_tracker[call_hash]}x with same args. STOPPING.")
+                        on_tool_log(f"[LOOP DETECTED] ~@{block.tool_name}@~ called {call_tracker[call_hash]}x with same args. STOPPING.")
                         loop_detected = True
                         break
 
-                    on_tool_log(f"<tool name='{block.tool_name}'> invoked")
+                    on_tool_log(f"~@{block.tool_name}@~ invoked")
                     result = self._execute_tool(
                         block,
                         on_tool_log, on_coder_result
@@ -179,10 +179,10 @@ class Engine:
 
                     if result == "[BLOCKED_BY_USER]":
                         tool_results.append(f"[TOOL_RESULT: {block.tool_name}]\nUser denied this command.")
-                        on_tool_log(f"<tool name='{block.tool_name}'> BLOCKED by user")
+                        on_tool_log(f"~@{block.tool_name}@~ BLOCKED by user")
                     else:
                         tool_results.append(f"[TOOL_RESULT: {block.tool_name}]\n{result}")
-                        on_tool_log(f"<tool name='{block.tool_name}'> completed")
+                        on_tool_log(f"~@{block.tool_name}@~ completed")
 
                 if loop_detected:
                     # Force the model to stop by injecting a stern message
