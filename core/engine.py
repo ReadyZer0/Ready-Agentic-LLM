@@ -13,6 +13,8 @@ import requests
 import threading
 import os
 import hashlib
+import time
+from datetime import datetime
 
 from core.sigil_parser import (
     parse_sigils, parse_write_block, parse_read_block,
@@ -24,6 +26,7 @@ from core.dataset import SYNTHETIC_MEMORY
 
 class Engine:
     def __init__(self, config_path: str):
+        self.config_path = config_path
         with open(config_path, 'r', encoding='utf-8') as f:
             self.config = json.load(f)
 
@@ -39,13 +42,16 @@ class Engine:
         ]
 
         self.tools = Tools()
-        self._max_tool_loops = 5          # Safety: max consecutive tool-use rounds
-        self._max_duplicate_calls = 2     # If same tool+args called this many times, STOP
+        self._max_tool_loops = 50         # Safety: max consecutive tool-use rounds
+        self._max_duplicate_calls = 1     # If same tool+args called this many times, STOP
         self._cancel_flag = False         # UI can set this to abort
-        self._session_id = 0              # Thread safety lock
-        self._is_manager_running = False  # Prevent parallel invocations
-        self._terminal_approve_fn = None  # Callback for terminal approval
+        self._is_manager_running = False  # Track if manager is busy
         self._write_approve_fn = None     # Callback for write approval
+        
+        # New Chat/History support
+        self.session_id = str(int(time.time()))
+        self.session_name = "New Chat"
+        self._ensure_session_dir()
 
     # ----------------------------------------------------------------
     # Cancellation
@@ -101,19 +107,19 @@ class Engine:
         self._write_approve_fn = write_approve_fn
 
         def run():
-            current_session = self._session_id
+            current_session = self.session_id
             on_status("manager", "THINKING...")
             loop_count = 0
             call_tracker = {}  # Track duplicate calls: hash -> count
 
             while loop_count < self._max_tool_loops:
-                if self._is_cancelled() or current_session != self._session_id:
+                if self._is_cancelled() or current_session != self.session_id:
                     on_tool_log("[STOPPED] Session changed or user cancelled.")
                     on_status("manager", "STOPPED")
                     return
 
                 loop_count += 1
-                on_tool_log(f"--- Loop {loop_count}/{self._max_tool_loops} ---")
+                on_tool_log(f"--- Loop {loop_count} ---")
 
                 # 1. Call the Manager LLM
                 try:
@@ -126,7 +132,7 @@ class Engine:
                             "temperature": 0.1,
                             "top_p": 0.9,
                             "repetition_penalty": 1.15,
-                            "max_tokens": 2048
+                            "max_tokens": self.config['manager'].get('max_tokens', 8192)
                         },
                         timeout=120
                     )
@@ -138,13 +144,14 @@ class Engine:
                     on_status("manager", "ERROR")
                     return
 
-                if self._is_cancelled() or current_session != self._session_id:
+                if self._is_cancelled() or current_session != self.session_id:
                     on_tool_log("[STOPPED] Session changed or user cancelled.")
                     on_status("manager", "STOPPED")
                     return
 
                 # 2. Record in history
                 self.manager_history.append({"role": "assistant", "content": raw_text})
+                self.save_session()
 
                 # 3. Parse sigils
                 parsed = parse_sigils(raw_text)
@@ -163,7 +170,7 @@ class Engine:
                 loop_detected = False
 
                 for block in parsed.tool_calls:
-                    if self._is_cancelled() or current_session != self._session_id:
+                    if self._is_cancelled() or current_session != self.session_id:
                         on_tool_log("[STOPPED] Session changed or user cancelled.")
                         on_status("manager", "STOPPED")
                         return
@@ -176,7 +183,7 @@ class Engine:
                     call_tracker[call_hash] = call_tracker.get(call_hash, 0) + 1
 
                     if call_tracker[call_hash] > self._max_duplicate_calls:
-                        on_tool_log(f"[LOOP DETECTED] ~@{block.tool_name}@~ called {call_tracker[call_hash]}x with same args. STOPPING.")
+                        on_tool_log(f"[LOOP DETECTED] ~@{block.tool_name}@~ called multiple times with same args. STOPPING.")
                         loop_detected = True
                         break
 
@@ -277,6 +284,11 @@ class Engine:
                 api_key = self.config.get("brave_api_key", "")
                 return self.tools.web_search(query, api_key)
 
+            elif tool_name == "ddg":
+                query = block.raw_content.strip()
+                on_tool_log(f"  DDG Searching: {query}")
+                return self.tools.duck_search(query)
+
             else:
                 return f"[ERROR] Unknown tool: {tool_name}"
 
@@ -299,7 +311,7 @@ class Engine:
                     "temperature": 0.1,
                     "top_p": 0.9,
                     "repetition_penalty": 1.15,
-                    "max_tokens": 4096
+                    "max_tokens": self.config['coder'].get('max_tokens', 8192)
                 },
                 timeout=300
             )
@@ -316,9 +328,90 @@ class Engine:
     # ----------------------------------------------------------------
     # Session Management
     # ----------------------------------------------------------------
+    def _ensure_session_dir(self):
+        sess_dir = os.path.join(os.path.dirname(self.config_path), "sessions")
+        if not os.path.exists(sess_dir):
+            os.makedirs(sess_dir)
+
     def reset_session(self):
-        self.manager_history = [self.manager_history[0]] + SYNTHETIC_MEMORY
-        self.coder_history = [self.coder_history[0]]
+        """Start a fresh session with a new ID."""
+        self.session_id = str(int(time.time()))
+        self.session_name = "New Chat"
+        self.manager_history = [
+            {"role": "system", "content": self.config['manager']['system_message']}
+        ] + SYNTHETIC_MEMORY
+        self.coder_history = [
+            {"role": "system", "content": self.config['coder']['system_message']}
+        ]
         self._cancel_flag = False
-        self._session_id += 1
+
+    def save_session(self):
+        """Persist current histories to disk."""
+        # Auto-name based on first user message if still "New Chat"
+        if self.session_name == "New Chat":
+            for msg in self.manager_history:
+                if msg['role'] == 'user':
+                    # Only name if there's actual user content
+                    content = msg['content'].strip()
+                    if content:
+                        self.session_name = content[:40].strip() + ("..." if len(content) > 40 else "")
+                        break
+
+        sess_dir = os.path.join(os.path.dirname(self.config_path), "sessions")
+        filepath = os.path.join(sess_dir, f"{self.session_id}.json")
+        data = {
+            "id": self.session_id,
+            "name": self.session_name,
+            "manager_history": self.manager_history,
+            "coder_history": self.coder_history,
+            "timestamp": time.time()
+        }
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+
+
+    def load_session(self, session_id: str):
+        """Reload a session from disk."""
+        sess_dir = os.path.join(os.path.dirname(self.config_path), "sessions")
+        filepath = os.path.join(sess_dir, f"{session_id}.json")
+        if os.path.exists(filepath):
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                self.session_id = data['id']
+                self.session_name = data.get('name', "Untitled")
+                self.manager_history = data['manager_history']
+                self.coder_history = data['coder_history']
+            return True
+        return False
+
+    def list_sessions(self):
+        """Return list of session metadata sorted by time."""
+        sess_dir = os.path.join(os.path.dirname(self.config_path), "sessions")
+        sessions = []
+        if not os.path.exists(sess_dir): return []
+        for f in os.listdir(sess_dir):
+            if f.endswith(".json"):
+                try:
+                    with open(os.path.join(sess_dir, f), 'r', encoding='utf-8') as s:
+                        data = json.load(s)
+                        sessions.append({
+                            "id": data['id'],
+                            "name": data.get('name', 'Untitled'),
+                            "time": data.get('timestamp', 0)
+                        })
+                except: continue
+        return sorted(sessions, key=lambda x: x['time'], reverse=True)
+
+    def delete_session(self, session_id: str) -> bool:
+        """Delete a session file from disk. Returns True if deleted."""
+        sess_dir = os.path.join(os.path.dirname(self.config_path), "sessions")
+        filepath = os.path.join(sess_dir, f"{session_id}.json")
+        if os.path.exists(filepath):
+            os.remove(filepath)
+            # If we deleted the active session, reset to a new one
+            if session_id == self.session_id:
+                self.reset_session()
+            return True
+        return False
+
 

@@ -228,15 +228,18 @@ class ReadyDualLLM(ctk.CTk):
         self.grid_columnconfigure(0, weight=0, minsize=180)
         self.grid_columnconfigure(1, weight=3)
         self.grid_columnconfigure(2, weight=2)
+        self.grid_columnconfigure(3, weight=0, minsize=0) # Hidden by default
         self.grid_rowconfigure(0, weight=1)
 
+        self.canvas_sidebar_visible = False
         self._build_sidebar()
         self._build_chat_pane()
         self._build_console_pane()
         self._build_status_bar()
+        self._build_history_sidebar() # Add this!
 
         self.canvas_pane = None  # Created on demand
-        self.after(100, self.user_input.focus)
+        self.populate_history()  # Initial load
 
     def create_agent_logo(self, size=256):
         """Programmatically generates the ReadyAI Agent logo."""
@@ -277,60 +280,93 @@ class ReadyDualLLM(ctk.CTk):
     # SIDEBAR
     # ============================================================
     def _build_sidebar(self):
-        # 1. Update window icon (coded logo)
+        # Window icon
         try:
             icon_img = self.create_agent_logo(size=32)
-            self.logo_icon_tk = ImageTk.PhotoImage(icon_img) # Keep reference to avoid GC
+            self.logo_icon_tk = ImageTk.PhotoImage(icon_img)
             self.tk.call('wm', 'iconphoto', self._w, self.logo_icon_tk)
         except Exception as e:
             print(f"Icon error: {e}")
 
-        self.sidebar = ctk.CTkFrame(self, width=180, corner_radius=0, fg_color="#1a1a2e")
+        self.sidebar = ctk.CTkFrame(self, width=200, corner_radius=0, fg_color="#12121f")
         self.sidebar.grid(row=0, column=0, sticky="nsew")
-        self.sidebar.grid_rowconfigure(7, weight=1)
+        # row 5 = history frame, expands to fill all remaining space
+        self.sidebar.grid_rowconfigure(5, weight=1)
+        self.sidebar.grid_columnconfigure(0, weight=1)
 
-        # Logo generated via code
-        img = self.create_agent_logo(size=512) # high res for scaling
-        self.logo_img = ctk.CTkImage(light_image=img, dark_image=img, size=(80, 80))
-        ctk.CTkLabel(self.sidebar, text="", image=self.logo_img).grid(row=0, column=0, padx=20, pady=(25, 0))
-        
+        # --- Logo & Title ---
+        img = self.create_agent_logo(size=512)
+        self.logo_img = ctk.CTkImage(light_image=img, dark_image=img, size=(72, 72))
+        ctk.CTkLabel(self.sidebar, text="", image=self.logo_img).grid(
+            row=0, column=0, padx=20, pady=(20, 0))
+
         ctk.CTkLabel(self.sidebar, text="ReadyAI Agent",
-                     font=ctk.CTkFont(size=18, weight="bold"),
-                     text_color="#e94560").grid(row=1, column=0, padx=20, pady=(5, 5))
+                     font=ctk.CTkFont(size=16, weight="bold"),
+                     text_color="#e94560").grid(row=1, column=0, padx=20, pady=(4, 0))
 
         ctk.CTkLabel(self.sidebar, text="Strategic Console",
-                     font=ctk.CTkFont(size=10),
-                     text_color="#6c757d").grid(row=2, column=0, padx=20, pady=(0, 15))
+                     font=ctk.CTkFont(size=10), text_color="#4a4a6a").grid(
+            row=2, column=0, padx=20, pady=(0, 12))
 
-        ctk.CTkButton(self.sidebar, text="⟳  New Session", command=self.new_session,
-                      fg_color="#16213e", hover_color="#0f3460",
-                      anchor="w").grid(row=3, column=0, padx=15, pady=5, sticky="ew")
+        # --- Action Buttons ---
+        btn_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        btn_frame.grid(row=3, column=0, padx=12, pady=6, sticky="ew")
+        btn_frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkButton(self.sidebar, text="⚙  Settings", command=self.open_settings,
-                      fg_color="#16213e", hover_color="#0f3460",
-                      anchor="w").grid(row=4, column=0, padx=15, pady=5, sticky="ew")
+        ctk.CTkButton(btn_frame, text="＋  New Chat", command=self.new_chat,
+                      fg_color="#e94560", hover_color="#c81e45",
+                      font=ctk.CTkFont(size=13, weight="bold"), height=34
+                      ).grid(row=0, column=0, sticky="ew", pady=(0, 4))
 
-        ctk.CTkButton(self.sidebar, text="📋  Tool Guide", command=self.show_tool_guide,
-                      fg_color="#16213e", hover_color="#0f3460",
-                      anchor="w").grid(row=5, column=0, padx=15, pady=5, sticky="ew")
+        for row_i, (label, cmd, hc) in enumerate([
+            ("⚙  Settings",       self.open_settings,         "#0f3460"),
+            ("👁  Toggle Canvas",  self.toggle_canvas_sidebar,  "#2d2060"),
+            ("📋  Tool Guide",     self.show_tool_guide,        "#0f3460"),
+            ("🏋️  Train Agent",   self.open_training_ui,       "#0c4a6e"),
+        ], start=1):
+            fg = "#0c4a6e" if "Train" in label else "#16213e"
+            ctk.CTkButton(btn_frame, text=label, command=cmd,
+                          fg_color=fg, hover_color=hc,
+                          anchor="w", height=30
+                          ).grid(row=row_i, column=0, sticky="ew", pady=2)
 
-        ctk.CTkButton(self.sidebar, text="🏋️  Train Agent", command=self.open_training_ui,
-                      fg_color="#0f766e", hover_color="#0c4a6e",
-                      anchor="w").grid(row=6, column=0, padx=15, pady=5, sticky="ew")
+        # --- Separator + HISTORY label ---
+        hist_header = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        hist_header.grid(row=4, column=0, sticky="ew", padx=12, pady=(8, 2))
+        hist_header.grid_columnconfigure(0, weight=1)
 
-        # Theme
-        ctk.CTkLabel(self.sidebar, text="Theme", text_color="#6c757d",
-                     font=ctk.CTkFont(size=10)).grid(row=8, column=0, padx=15, pady=(10, 0))
-        ctk.CTkOptionMenu(self.sidebar, values=["Dark", "Light", "System"],
+        sep = ctk.CTkFrame(hist_header, fg_color="#2a2a45", height=1)
+        sep.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+
+        ctk.CTkLabel(hist_header, text="HISTORY",
+                     font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color="#4a4a6a").grid(row=1, column=0, sticky="w")
+
+        # --- Chat History (Scrollable, Expands) ---
+        self.history_frame = ctk.CTkScrollableFrame(
+            self.sidebar, fg_color="transparent", corner_radius=0)
+        self.history_frame.grid(row=5, column=0, sticky="nsew", padx=6, pady=(0, 4))
+        self.history_frame.grid_columnconfigure(0, weight=1)
+
+        # --- Bottom: Theme + Credit ---
+        bottom = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        bottom.grid(row=6, column=0, sticky="ew", padx=12, pady=(4, 10))
+        bottom.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkOptionMenu(bottom, values=["Dark", "Light", "System"],
                           command=lambda v: ctk.set_appearance_mode(v),
-                          width=140).grid(row=9, column=0, padx=15, pady=(5, 10))
+                          width=140, height=28,
+                          fg_color="#16213e", button_color="#1a1a3e"
+                          ).grid(row=0, column=0, pady=(0, 4))
 
-        # Credit
-        ctk.CTkButton(self.sidebar, text="Created by Ali Dheyaa",
-                      font=ctk.CTkFont(size=10), fg_color="transparent",
-                      hover_color="#16213e", text_color="#6c757d", height=20,
-                      command=lambda: webbrowser.open("https://www.linkedin.com/in/ali-dheyaa-abdulwahab-6bbbb1239/")
-                      ).grid(row=8, column=0, padx=15, pady=(5, 12))
+        ctk.CTkButton(bottom, text="Created by Ali Dheyaa",
+                      font=ctk.CTkFont(size=9), fg_color="transparent",
+                      hover_color="#16213e", text_color="#4a4a6a", height=18,
+                      command=lambda: webbrowser.open(
+                          "https://www.linkedin.com/in/ali-dheyaa-abdulwahab-6bbbb1239/")
+                      ).grid(row=1, column=0)
+
+
 
     # ============================================================
     # CHAT PANE
@@ -341,9 +377,22 @@ class ReadyDualLLM(ctk.CTk):
         self.chat_frame.grid_rowconfigure(1, weight=1)
         self.chat_frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(self.chat_frame, text="MANAGER CHAT",
+        # Header with current session name
+        header = ctk.CTkFrame(self.chat_frame, fg_color="transparent")
+        header.grid(row=0, column=0, padx=10, pady=(10, 0), sticky="ew")
+        header.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(header, text="MANAGER CHAT  —",
                      font=ctk.CTkFont(size=13, weight="bold"),
-                     text_color="#e94560").grid(row=0, column=0, padx=18, pady=(12, 5), sticky="w")
+                     text_color="#e94560").grid(row=0, column=0, sticky="w", padx=(8, 4))
+
+        self.chat_name_label = ctk.CTkLabel(
+            header, text="New Chat",
+            font=ctk.CTkFont(size=12, slant="italic"),
+            text_color="#818cf8")
+        self.chat_name_label.grid(row=0, column=1, sticky="w")
+
+
 
         self.chat_display = ctk.CTkTextbox(self.chat_frame, wrap="word",
                                             font=ctk.CTkFont(family="Segoe UI", size=12),
@@ -422,23 +471,33 @@ class ReadyDualLLM(ctk.CTk):
         self.auto_label.pack(side="right", padx=20)
 
     # ============================================================
-    # CANVAS
+    # CANVAS (Dedicated Sidebar)
     # ============================================================
+    def toggle_canvas_sidebar(self):
+        self.canvas_sidebar_visible = not self.canvas_sidebar_visible
+        if self.canvas_sidebar_visible:
+            self.grid_columnconfigure(3, weight=2, minsize=300)
+            if not self.canvas_pane:
+                self.canvas_pane = CanvasPane(self, on_close=self.toggle_canvas_sidebar)
+            self.canvas_pane.grid(row=0, column=3, padx=(0, 15), pady=15, sticky="nsew")
+        else:
+            self.grid_columnconfigure(3, weight=0, minsize=0)
+            if self.canvas_pane:
+                self.canvas_pane.grid_forget()
+
     def open_canvas(self, title: str, content: str, filepath: str = ""):
+        # Auto-show sidebar if hidden
+        if not self.canvas_sidebar_visible:
+            self.toggle_canvas_sidebar()
+            
         if self.canvas_pane:
             self.canvas_pane.show_content(title, content, filepath)
-            return
-        # Hide console, show canvas in its place
-        self.console_frame.grid_forget()
-        self.canvas_pane = CanvasPane(self, on_close=self.close_canvas)
-        self.canvas_pane.grid(row=0, column=2, padx=(8, 15), pady=15, sticky="nsew")
-        self.canvas_pane.show_content(title, content, filepath)
 
     def close_canvas(self):
-        if self.canvas_pane:
-            self.canvas_pane.destroy()
-            self.canvas_pane = None
-        self.console_frame.grid(row=0, column=2, padx=(8, 15), pady=15, sticky="nsew")
+        # We now use the toggle to hide it
+        if self.canvas_sidebar_visible:
+            self.toggle_canvas_sidebar()
+
 
     # ============================================================
     # UI HELPERS (Thread-safe)
@@ -520,7 +579,110 @@ class ReadyDualLLM(ctk.CTk):
     # ============================================================
     # ACTIONS
     # ============================================================
-    def send_message(self):
+    # ============================================================
+    # SESSIONS / HISTORY
+    # ============================================================
+    def _build_history_sidebar(self):
+        pass  # Done inside _build_sidebar
+
+    def populate_history(self):
+        """Rebuild the history list in the sidebar."""
+        for child in self.history_frame.winfo_children():
+            child.destroy()
+
+        sessions = self.engine.list_sessions()
+        active_id = self.engine.session_id
+
+        for s in sessions:
+            row = ctk.CTkFrame(self.history_frame, fg_color="transparent")
+            row.pack(fill="x", pady=1)
+            row.grid_columnconfigure(0, weight=1)
+
+            is_active = s['id'] == active_id
+            fg = "#e94560" if is_active else "transparent"
+            tc = "#ffffff" if is_active else "#ced4da"
+
+            name_btn = ctk.CTkButton(
+                row, text=s['name'], anchor="w",
+                fg_color=fg, hover_color="#1e1e3e",
+                text_color=tc, height=30, font=ctk.CTkFont(size=11),
+                command=lambda sid=s['id']: self.load_session(sid))
+            name_btn.grid(row=0, column=0, sticky="ew", padx=(0, 2))
+
+            del_btn = ctk.CTkButton(
+                row, text="✕", width=24, height=30,
+                fg_color="transparent", hover_color="#7f1d1d",
+                text_color="#6c757d", font=ctk.CTkFont(size=10),
+                command=lambda sid=s['id']: self._delete_session(sid))
+            del_btn.grid(row=0, column=1)
+
+        if not sessions:
+            ctk.CTkLabel(self.history_frame, text="No history yet",
+                         text_color="#4a4a6a",
+                         font=ctk.CTkFont(size=10, slant="italic")).pack(pady=10)
+
+    def _delete_session(self, sid):
+        """Delete a session and refresh the list; if active, also clear the chat."""
+        was_active = (sid == self.engine.session_id)
+        self.engine.delete_session(sid)
+        if was_active:
+            self.chat_display.configure(state="normal")
+            self.chat_display.delete("0.0", "end")
+            self.chat_display.configure(state="disabled")
+            self._log_console("Active session deleted — started new chat.")
+        self.populate_history()
+
+    def new_chat(self):
+        """Save current (only if it has content) and start fresh."""
+        has_content = any(
+            m['role'] == 'user'
+            for m in self.engine.manager_history
+            if m.get('content', '').strip()
+        )
+        if has_content:
+            self.engine.save_session()
+        self.engine.reset_session()
+        self.chat_display.configure(state="normal")
+        self.chat_display.delete("0.0", "end")
+        self.chat_display.configure(state="disabled")
+        self._update_chat_name_label()
+        self.populate_history()
+        self._log_console("New chat started.")
+
+    def load_session(self, sid):
+        """Load a session by ID and redraw the chat."""
+        # Only persist current session if it has real user messages
+        has_content = any(
+            m['role'] == 'user'
+            for m in self.engine.manager_history
+            if m.get('content', '').strip()
+        )
+        if has_content:
+            self.engine.save_session()
+
+        if self.engine.load_session(sid):
+            self.chat_display.configure(state="normal")
+            self.chat_display.delete("0.0", "end")
+            self.chat_display.configure(state="disabled")
+
+            # Re-render messages (skip system + synthetic preamble)
+            from core.dataset import SYNTHETIC_MEMORY
+            skip_count = 1 + len(SYNTHETIC_MEMORY)
+            for i, msg in enumerate(self.engine.manager_history):
+                if i < skip_count:
+                    continue
+                role = msg['role']
+                content = msg['content']
+                if role in ["user", "assistant"]:
+                    self._log_chat(role, content)
+
+            self._update_chat_name_label()
+            self.populate_history()
+            self._log_console(f"Loaded: {self.engine.session_name}")
+
+
+
+    def send_message(self, event=None):
         msg = self.user_input.get().strip()
         if not msg:
             return
@@ -530,6 +692,10 @@ class ReadyDualLLM(ctk.CTk):
         self._log_console("Manager processing...")
         self.send_btn.configure(state="disabled")
         self.stop_btn.configure(fg_color="#ef4444")
+
+        # The engine appends the message before calling the API,
+        # so refresh name label right after send (name auto-generated inside engine on save)
+        self.after(200, self._update_chat_name_label)
 
         self.engine.send_to_manager(
             user_input=msg,
@@ -541,23 +707,25 @@ class ReadyDualLLM(ctk.CTk):
             write_approve_fn=self._approve_write
         )
 
+    def _update_chat_name_label(self):
+        """Update the chat title label to reflect the current session name."""
+        self.after(0, lambda: self.chat_name_label.configure(
+            text=self.engine.session_name))
+
     def _update_status_and_buttons(self, role, state):
         self._set_status(role, state)
         if state in ("READY", "ERROR", "STOPPED"):
             self.after(0, lambda: self.send_btn.configure(state="normal"))
             self.after(0, lambda: self.stop_btn.configure(fg_color="#6c757d"))
+            # Refresh sidebar name after turn completes
+            self.after(0, self.populate_history)
+            self.after(0, self._update_chat_name_label)
 
     def stop_generation(self):
         self.engine.cancel()
         self._log_console("[USER] Stop requested.")
         self._set_status("manager", "STOPPING...")
 
-    def new_session(self):
-        self.engine.reset_session()
-        self.chat_display.configure(state="normal")
-        self.chat_display.delete("0.0", "end")
-        self.chat_display.configure(state="disabled")
-        self._log_console("Session reset.")
 
     # ============================================================
     # SETTINGS
@@ -615,8 +783,11 @@ class ReadyDualLLM(ctk.CTk):
 
         mgr_url = add_field(scroll, "Manager API URL:", self.engine.config['manager']['url'])
         mgr_model = add_model_field(scroll, "Manager Model (or 'auto'):", self.engine.config['manager']['model'], self.engine.config['manager']['url'])
+        mgr_tokens = add_field(scroll, "Manager Max Tokens:", str(self.engine.config['manager'].get('max_tokens', 8192)))
+        
         coder_url = add_field(scroll, "Coder API URL:", self.engine.config['coder']['url'])
         coder_model = add_model_field(scroll, "Coder Model (or 'auto'):", self.engine.config['coder']['model'], self.engine.config['coder']['url'])
+        coder_tokens = add_field(scroll, "Coder Max Tokens:", str(self.engine.config['coder'].get('max_tokens', 8192)))
 
         ctk.CTkLabel(scroll, text="━━━━━━━━ Web Search ━━━━━━━━",
                      text_color="#6c757d").pack(pady=(15, 0))
@@ -639,8 +810,15 @@ class ReadyDualLLM(ctk.CTk):
         def save():
             self.engine.config['manager']['url'] = mgr_url.get()
             self.engine.config['manager']['model'] = mgr_model.get()
+            try:
+                self.engine.config['manager']['max_tokens'] = int(mgr_tokens.get())
+            except: pass
+            
             self.engine.config['coder']['url'] = coder_url.get()
             self.engine.config['coder']['model'] = coder_model.get()
+            try:
+                self.engine.config['coder']['max_tokens'] = int(coder_tokens.get())
+            except: pass
             self.engine.config['brave_api_key'] = brave_key.get()
             self.engine.config['auto_approve'] = auto_var.get()
             self.engine.manager_url = mgr_url.get()

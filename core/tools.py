@@ -7,6 +7,7 @@ import os
 import subprocess
 import json
 import requests
+from duckduckgo_search import DDGS
 
 
 class Tools:
@@ -58,7 +59,8 @@ class Tools:
             if result.stderr:
                 output += f"\n[STDERR]\n{result.stderr}"
             if result.returncode != 0:
-                output += f"\n[EXIT CODE: {result.returncode}]"
+                return f"[CRASH ERROR] The command failed with exit code {result.returncode}.\n\n[STDOUT]\n{result.stdout}\n\n[STDERR]\n{result.stderr}"
+            
             return output.strip() or "[OK] Command completed (no output)"
         except subprocess.TimeoutExpired:
             return "[ERROR] Command timed out after 30 seconds"
@@ -113,10 +115,29 @@ class Tools:
                 url = item.get("url", "")
                 desc = item.get("description", "")
                 results.append(f"- {title}\n  {url}\n  {desc}")
-
             if results:
                 return f"[SEARCH RESULTS for: {query}]\n" + "\n\n".join(results)
             else:
                 return f"[SEARCH] No results found for: {query}"
         except Exception as e:
             return f"[ERROR] search failed: {e}"
+
+    @staticmethod
+    def duck_search(query: str) -> str:
+        """~@ddg@~ handler: Search the web for free using DuckDuckGo."""
+        try:
+            results = []
+            with DDGS() as ddgs:
+                ddgs_gen = ddgs.text(query, max_results=8)
+                for r in ddgs_gen:
+                    title = r.get("title", "No Title")
+                    href = r.get("href", "No URL")
+                    body = r.get("body", "No Description")
+                    results.append(f"- {title}\n  {href}\n  {body}")
+            
+            if results:
+                return f"[DDG SEARCH RESULTS for: {query}]\n\n" + "\n\n".join(results)
+            else:
+                return f"[DDG SEARCH] No results found for: {query}"
+        except Exception as e:
+            return f"[ERROR] ddg search failed: {e}"
