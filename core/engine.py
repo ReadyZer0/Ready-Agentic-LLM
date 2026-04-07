@@ -41,6 +41,7 @@ class Engine:
         self._max_tool_loops = 5          # Safety: max consecutive tool-use rounds
         self._max_duplicate_calls = 2     # If same tool+args called this many times, STOP
         self._cancel_flag = False         # UI can set this to abort
+        self._session_id = 0              # Thread safety lock
         self._terminal_approve_fn = None  # Callback for terminal approval
         self._write_approve_fn = None     # Callback for write approval
 
@@ -93,13 +94,14 @@ class Engine:
         self._write_approve_fn = write_approve_fn
 
         def run():
+            current_session = self._session_id
             on_status("manager", "THINKING...")
             loop_count = 0
             call_tracker = {}  # Track duplicate calls: hash -> count
 
             while loop_count < self._max_tool_loops:
-                if self._is_cancelled():
-                    on_tool_log("[STOPPED] User cancelled operation.")
+                if self._is_cancelled() or current_session != self._session_id:
+                    on_tool_log("[STOPPED] Session changed or user cancelled.")
                     on_status("manager", "STOPPED")
                     return
 
@@ -127,8 +129,8 @@ class Engine:
                     on_status("manager", "ERROR")
                     return
 
-                if self._is_cancelled():
-                    on_tool_log("[STOPPED] User cancelled operation.")
+                if self._is_cancelled() or current_session != self._session_id:
+                    on_tool_log("[STOPPED] Session changed or user cancelled.")
                     on_status("manager", "STOPPED")
                     return
 
@@ -152,8 +154,8 @@ class Engine:
                 loop_detected = False
 
                 for block in parsed.tool_calls:
-                    if self._is_cancelled():
-                        on_tool_log("[STOPPED] User cancelled operation.")
+                    if self._is_cancelled() or current_session != self._session_id:
+                        on_tool_log("[STOPPED] Session changed or user cancelled.")
                         on_status("manager", "STOPPED")
                         return
 
@@ -165,22 +167,22 @@ class Engine:
                     call_tracker[call_hash] = call_tracker.get(call_hash, 0) + 1
 
                     if call_tracker[call_hash] > self._max_duplicate_calls:
-                        on_tool_log(f"[LOOP DETECTED] ~@{block.tool_name}@~ called {call_tracker[call_hash]}x with same args. STOPPING.")
+                        on_tool_log(f"[LOOP DETECTED] <tool name='{block.tool_name}'> called {call_tracker[call_hash]}x with same args. STOPPING.")
                         loop_detected = True
                         break
 
-                    on_tool_log(f"~@{block.tool_name}@~ invoked")
+                    on_tool_log(f"<tool name='{block.tool_name}'> invoked")
                     result = self._execute_tool(
-                        block.tool_name, block.raw_content,
+                        block,
                         on_tool_log, on_coder_result
                     )
 
                     if result == "[BLOCKED_BY_USER]":
                         tool_results.append(f"[TOOL_RESULT: {block.tool_name}]\nUser denied this command.")
-                        on_tool_log(f"~@{block.tool_name}@~ BLOCKED by user")
+                        on_tool_log(f"<tool name='{block.tool_name}'> BLOCKED by user")
                     else:
                         tool_results.append(f"[TOOL_RESULT: {block.tool_name}]\n{result}")
-                        on_tool_log(f"~@{block.tool_name}@~ completed")
+                        on_tool_log(f"<tool name='{block.tool_name}'> completed")
 
                 if loop_detected:
                     # Force the model to stop by injecting a stern message
@@ -206,15 +208,16 @@ class Engine:
     # ----------------------------------------------------------------
     # Tool Execution
     # ----------------------------------------------------------------
-    def _execute_tool(self, tool_name: str, raw_content: str, on_tool_log, on_coder_result=None) -> str:
+    def _execute_tool(self, block, on_tool_log, on_coder_result=None) -> str:
+        tool_name = block.tool_name
         try:
             if tool_name == "read":
-                filepath = parse_read_block(raw_content)
+                filepath = parse_read_block(block)
                 on_tool_log(f"  Reading: {filepath}")
                 return self.tools.read(filepath)
 
             elif tool_name == "write":
-                filepath, content = parse_write_block(raw_content)
+                filepath, content = parse_write_block(block)
                 on_tool_log(f"  Writing: {filepath}")
 
                 # --- WRITE APPROVAL ---
@@ -227,7 +230,7 @@ class Engine:
                 return self.tools.write(filepath, content)
 
             elif tool_name == "terminal":
-                command = parse_terminal_block(raw_content)
+                command = parse_terminal_block(block)
                 on_tool_log(f"  Command: {command}")
 
                 # --- TERMINAL APPROVAL ---
@@ -239,17 +242,17 @@ class Engine:
                 return self.tools.terminal(command)
 
             elif tool_name == "explorer":
-                path = parse_explorer_block(raw_content)
+                path = parse_explorer_block(block)
                 on_tool_log(f"  Exploring: {path}")
                 return self.tools.explorer(path)
 
             elif tool_name == "delegate":
-                task = parse_delegate_block(raw_content)
+                task = parse_delegate_block(block)
                 on_tool_log(f"  Delegating to Expert Coder...")
                 return self._delegate_to_coder(task, on_tool_log, on_coder_result)
 
             elif tool_name == "search":
-                query = raw_content.strip()
+                query = block.raw_content.strip()
                 on_tool_log(f"  Searching: {query}")
                 api_key = self.config.get("brave_api_key", "")
                 return self.tools.web_search(query, api_key)
@@ -295,3 +298,5 @@ class Engine:
         self.manager_history = [self.manager_history[0]]
         self.coder_history = [self.coder_history[0]]
         self._cancel_flag = False
+        self._session_id += 1
+

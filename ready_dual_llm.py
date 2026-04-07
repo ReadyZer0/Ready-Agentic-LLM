@@ -632,14 +632,14 @@ class ReadyDualLLM(ctk.CTk):
 
     def show_tool_guide(self):
         guide = (
-            "~@sigil@~ TOOL PROTOCOL\n"
+            "XML TOOL PROTOCOL\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "~@read@~ filepath ~@exit@~\n  → Reads a file\n\n"
-            "~@write@~ filepath\\ncontent ~@exit@~\n  → Writes to file (APPROVAL REQUIRED)\n\n"
-            "~@terminal@~ command ~@exit@~\n  → Runs command (APPROVAL REQUIRED)\n\n"
-            "~@explorer@~ path ~@exit@~\n  → Lists directory\n\n"
-            "~@search@~ query ~@exit@~\n  → Web search (Brave)\n\n"
-            "~@delegate@~ task ~@exit@~\n  → Send to Expert Coder\n"
+            '<tool name="read">filepath</tool>\n  → Reads a file\n\n'
+            '<tool name="write" path="filepath">\ncontent\n</tool>\n  → Writes to file (APPROVAL REQUIRED)\n\n'
+            '<tool name="terminal">command</tool>\n  → Runs command (APPROVAL REQUIRED)\n\n'
+            '<tool name="explorer" path="C:\\"> </tool>\n  → Lists directory\n\n'
+            '<tool name="search">query</tool>\n  → Web search (Brave)\n\n'
+            '<tool name="delegate">task</tool>\n  → Send to Expert Coder\n'
         )
         self._log_console(guide)
 
