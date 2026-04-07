@@ -19,6 +19,7 @@ from core.sigil_parser import (
     parse_terminal_block, parse_explorer_block, parse_delegate_block
 )
 from core.tools import Tools
+from core.dataset import SYNTHETIC_MEMORY
 
 
 class Engine:
@@ -31,7 +32,7 @@ class Engine:
 
         self.manager_history = [
             {"role": "system", "content": self.config['manager']['system_message']}
-        ]
+        ] + SYNTHETIC_MEMORY
         
         self.coder_history = [
             {"role": "system", "content": self.config['coder']['system_message']}
@@ -295,7 +296,7 @@ class Engine:
     # Session Management
     # ----------------------------------------------------------------
     def reset_session(self):
-        self.manager_history = [self.manager_history[0]]
+        self.manager_history = [self.manager_history[0]] + SYNTHETIC_MEMORY
         self.coder_history = [self.coder_history[0]]
         self._cancel_flag = False
         self._session_id += 1

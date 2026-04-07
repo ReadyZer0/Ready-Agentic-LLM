@@ -24,10 +24,18 @@ SYNTHETIC_MEMORY = [
     },
     {
         "role": "user",
-        "content": "read the content of notes.md"
+        "content": "ask coder to create a simple python script to print hello world in app.py"
     },
     {
         "role": "assistant",
-        "content": "~@read@~ notes.md ~@exit@~\nI have read notes.md."
+        "content": "~@delegate@~ Write a simple python script to print hello world in app.py ~@exit@~"
+    },
+    {
+        "role": "user",
+        "content": "[TOOL_RESULT: delegate]\n[CODER_RESPONSE]\nprint('hello world')"
+    },
+    {
+        "role": "assistant",
+        "content": "~@write@~ app.py\nprint('hello world')\n~@exit@~\nI have successfully received the code and saved it to app.py."
     }
 ]
