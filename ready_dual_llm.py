@@ -648,8 +648,8 @@ class ReadyDualLLM(ctk.CTk):
     # ============================================================
     def open_training_ui(self):
         dialog = ctk.CTkToplevel(self)
-        dialog.title("🏋️ Train Agent (LoRA)")
-        dialog.geometry("540x450")
+        dialog.title("🏋️ Train Agent (LoRA & GGUF)")
+        dialog.geometry("540x510")
         dialog.transient(self)
         dialog.grab_set()
 
@@ -659,10 +659,22 @@ class ReadyDualLLM(ctk.CTk):
         frame = ctk.CTkFrame(dialog, fg_color="transparent")
         frame.pack(fill="x", padx=20)
         
-        ctk.CTkLabel(frame, text="HF Model ID (safetensors):").pack(anchor="w")
-        model_entry = ctk.CTkEntry(frame, width=480)
+        ctk.CTkLabel(frame, text="HF Model ID or Local Folder (safetensors):").pack(anchor="w")
+        
+        md_entry_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        md_entry_frame.pack(fill="x", pady=(0, 10))
+        
+        model_entry = ctk.CTkEntry(md_entry_frame)
         model_entry.insert(0, "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct")
-        model_entry.pack(pady=(0, 10))
+        model_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        def browse_model():
+            folderpath = filedialog.askdirectory(title="Select Local Model Folder")
+            if folderpath:
+                model_entry.delete(0, "end")
+                model_entry.insert(0, folderpath)
+                
+        ctk.CTkButton(md_entry_frame, text="Browse Folder...", width=100, command=browse_model).pack(side="right")
         
         dataset_frame = ctk.CTkFrame(frame, fg_color="transparent")
         dataset_frame.pack(fill="x", pady=(0, 15))
@@ -684,14 +696,23 @@ class ReadyDualLLM(ctk.CTk):
                 dataset_entry.delete(0, "end")
                 dataset_entry.insert(0, filepath)
                 
-        ctk.CTkButton(ds_entry_frame, text="Browse...", width=80, command=browse_file).pack(side="right")
+        ctk.CTkButton(ds_entry_frame, text="Browse File...", width=100, command=browse_file).pack(side="right")
 
-        ctk.CTkLabel(frame, text="Note: GGUF files cannot be directly trained. We use HF format then export.",
+        ctk.CTkLabel(frame, text="Target GGUF Export (For LM Studio):").pack(anchor="w")
+        quant_menu = ctk.CTkOptionMenu(frame, values=["q4_k_m", "q8_0", "f16"], width=480)
+        quant_menu.set("q4_k_m")
+        quant_menu.pack(pady=(0, 15))
+
+        ctk.CTkLabel(frame, text="GGUF is generated at the end of training and auto-saved to LM Studio.",
                      text_color="#fbbf24", font=ctk.CTkFont(size=10)).pack(anchor="w", pady=(0, 10))
 
         def generate_script():
             model_id = model_entry.get().strip()
             dataset_path = dataset_entry.get().strip()
+            target_quant = quant_menu.get()
+            
+            # Formulate LM Studio output directory
+            lm_studio_path = os.path.expanduser("~/.cache/lm-studio/models/ReadyAI_Custom_GGUF").replace("\\", "/")
             
             ds_load_code = "print('👉 TODO: Add your custom SFTTrainer dataset logic here.')"
             if dataset_path:
@@ -732,8 +753,21 @@ model = FastLanguageModel.get_peft_model(
 print("\\n✅ Model loaded from {model_id} and wrapped for LoRA training.")
 {ds_load_code}
 
-print("\\n👉 Once trained, use this to export to GGUF:")
-print("   model.save_pretrained_gguf('readyai_agent_model', tokenizer, quantization_method='q4_k_m')\\n")
+print("\\n-----------------------------------------------------------")
+print("👉 TODO: Provide your SFTTrainer logic above to train the model.")
+print(f"👉 Once trained, it will automatically export to: {lm_studio_path}")
+print("-----------------------------------------------------------")
+
+# 4. GGUF Export Output
+import os
+os.makedirs("{lm_studio_path}", exist_ok=True)
+output_name = "{lm_studio_path}/adapter_model"
+print(f"\\n⏳ Exporting trained model as GGUF ({target_quant})... This will take time.")
+try:
+    model.save_pretrained_gguf('{lm_studio_path}', tokenizer, quantization_method='{target_quant}')
+    print("\\n✅ GGUF Export successful! Check LM Studio.")
+except Exception as e:
+    print("\\n❌ GGUF Export failed:", e)
 """
             script_path = os.path.join(SCRIPT_DIR, "train_lora.py")
             with open(script_path, "w", encoding="utf-8") as f:
