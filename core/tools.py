@@ -41,6 +41,27 @@ class Tools:
             return f"[ERROR] write failed: {e}"
 
     @staticmethod
+    def replace(filepath: str, old: str, new: str) -> str:
+        """~@replace@~ handler: Replace one exact snippet in a file."""
+        try:
+            filepath = filepath.strip().strip('"').strip("'")
+            if not os.path.exists(filepath):
+                return f"[ERROR] File not found: {filepath}"
+            with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+            count = content.count(old)
+            if count == 0:
+                return "[ERROR] Old snippet was not found. Read the file first and use an exact snippet."
+            if count > 1:
+                return f"[ERROR] Old snippet matched {count} places. Use a larger unique snippet."
+            updated = content.replace(old, new, 1)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(updated)
+            return f"[OK] Replaced snippet in {filepath}"
+        except Exception as e:
+            return f"[ERROR] replace failed: {e}"
+
+    @staticmethod
     def terminal(command: str) -> str:
         """~@terminal@~ handler: Execute a shell command."""
         try:
@@ -121,6 +142,32 @@ class Tools:
                 return f"[SEARCH] No results found for: {query}"
         except Exception as e:
             return f"[ERROR] search failed: {e}"
+
+    @staticmethod
+    def google_search(query: str, api_key: str = "", cx: str = "") -> str:
+        """Google Custom Search JSON API handler."""
+        if not api_key or not cx:
+            return "[ERROR] Google Search requires both an API key and Search Engine ID (CX) in Settings."
+        try:
+            r = requests.get(
+                "https://www.googleapis.com/customsearch/v1",
+                params={"key": api_key, "cx": cx, "q": query, "num": 5},
+                timeout=10
+            )
+            r.raise_for_status()
+            data = r.json()
+
+            results = []
+            for item in data.get("items", [])[:5]:
+                title = item.get("title", "")
+                url = item.get("link", "")
+                desc = item.get("snippet", "")
+                results.append(f"- {title}\n  {url}\n  {desc}")
+            if results:
+                return f"[GOOGLE SEARCH RESULTS for: {query}]\n" + "\n\n".join(results)
+            return f"[GOOGLE SEARCH] No results found for: {query}"
+        except Exception as e:
+            return f"[ERROR] google search failed: {e}"
 
     @staticmethod
     def duck_search(query: str) -> str:

@@ -93,3 +93,16 @@ def parse_explorer_block(block: ToolBlock) -> str:
 
 def parse_delegate_block(block: ToolBlock) -> str:
     return block.raw_content.strip()
+
+def parse_replace_block(block: ToolBlock) -> tuple:
+    text = block.raw_content.strip()
+    lines = text.split('\n', 1)
+    filepath = lines[0].strip()
+    payload = lines[1] if len(lines) > 1 else ""
+    old_marker = "---OLD---"
+    new_marker = "---NEW---"
+    if old_marker not in payload or new_marker not in payload:
+        raise ValueError("replace block must contain ---OLD--- and ---NEW--- markers")
+    old_part = payload.split(old_marker, 1)[1].split(new_marker, 1)[0]
+    new_part = payload.split(new_marker, 1)[1]
+    return filepath, old_part.strip("\n"), new_part.strip("\n")

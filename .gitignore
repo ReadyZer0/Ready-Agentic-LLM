@@ -12,6 +12,8 @@ newfile.txt
 test.txt
 output.txt
 temp_*
+attachments/
+sessions/*.json
 
 # OS
 .DS_Store
