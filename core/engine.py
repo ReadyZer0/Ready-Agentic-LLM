@@ -43,6 +43,7 @@ class Engine:
         self._max_duplicate_calls = 2     # If same tool+args called this many times, STOP
         self._cancel_flag = False         # UI can set this to abort
         self._session_id = 0              # Thread safety lock
+        self._is_manager_running = False  # Prevent parallel invocations
         self._terminal_approve_fn = None  # Callback for terminal approval
         self._write_approve_fn = None     # Callback for write approval
 
@@ -89,6 +90,11 @@ class Engine:
         terminal_approve_fn(command: str) -> bool
         write_approve_fn(filepath: str, content: str) -> (bool, str)
         """
+        if self._is_manager_running:
+            on_tool_log("[WARNING] Manager is already processing.")
+            return
+
+        self._is_manager_running = True
         self.manager_history.append({"role": "user", "content": user_input})
         self._cancel_flag = False
         self._terminal_approve_fn = terminal_approve_fn
@@ -117,7 +123,9 @@ class Engine:
                         json={
                             "model": model_id,
                             "messages": self.manager_history,
-                            "temperature": 0.7,
+                            "temperature": 0.1,
+                            "top_p": 0.9,
+                            "repetition_penalty": 1.15,
                             "max_tokens": 2048
                         },
                         timeout=120
@@ -197,14 +205,22 @@ class Engine:
                 # 7. Feed results back
                 if tool_results:
                     feedback = "\n---\n".join(tool_results)
+                    feedback += "\n\n[SYSTEM] Tool executed automatically. If the user's task is fully complete, reply ONLY with 'DONE' and say NOTHING else. If more tools are needed, use them now."
                     self.manager_history.append({"role": "user", "content": feedback})
 
             # Hit max loops
             on_tool_log(f"[WARNING] Max tool loops ({self._max_tool_loops}) reached. Stopping.")
             on_chat("assistant", "(I've reached my tool limit for this turn. Please give me a new instruction.)")
             on_status("manager", "READY")
+            self._is_manager_running = False
 
-        threading.Thread(target=run, daemon=True).start()
+        def safe_run():
+            try:
+                run()
+            finally:
+                self._is_manager_running = False
+
+        threading.Thread(target=safe_run, daemon=True).start()
 
     # ----------------------------------------------------------------
     # Tool Execution
@@ -278,6 +294,8 @@ class Engine:
                     "model": model_id,
                     "messages": self.coder_history,
                     "temperature": 0.1,
+                    "top_p": 0.9,
+                    "repetition_penalty": 1.15,
                     "max_tokens": 4096
                 },
                 timeout=300

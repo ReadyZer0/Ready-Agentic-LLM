@@ -16,14 +16,6 @@ SYNTHETIC_MEMORY = [
     },
     {
         "role": "user",
-        "content": "what files are in the C:\\ drive?"
-    },
-    {
-        "role": "assistant",
-        "content": "~@terminal@~ dir C:\\ ~@exit@~\nHere are the files in your C:\\ drive."
-    },
-    {
-        "role": "user",
         "content": "ask coder to create a simple python script to print hello world in app.py"
     },
     {
