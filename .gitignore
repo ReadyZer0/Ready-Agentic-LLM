@@ -6,6 +6,7 @@ __pycache__/
 
 # Local config (contains API keys)
 config.json
+layout_state.json
 
 # Tool artifacts
 newfile.txt

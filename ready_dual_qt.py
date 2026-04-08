@@ -16,8 +16,8 @@ from PySide6.QtWidgets import (
     QTabWidget, QInputDialog, QDialog, QCheckBox, QSpinBox, QMessageBox,
     QFileDialog
 )
-from PySide6.QtCore import Qt, QSize, Signal, QObject, Slot, QThread, QTimer
-from PySide6.QtGui import QFont, QColor, QIcon, QPixmap, QImage, QPainter, QTextCharFormat, QBrush, QSyntaxHighlighter
+from PySide6.QtCore import Qt, QSize, Signal, QObject, Slot, QThread, QTimer, QByteArray
+from PySide6.QtGui import QFont, QColor, QIcon, QPixmap, QImage, QPainter, QPen, QPainterPath, QTextCharFormat, QBrush, QSyntaxHighlighter
 
 # Add core engine to path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -30,6 +30,7 @@ from core.sigil_parser import parse_sigils
 APP_NAME = "Ready Agentic AI"
 APP_SUBTITLE = "MULTI MODAL AGENTIC AI"
 APP_WINDOW_TITLE = f"{APP_NAME} - Multi Modal Agentic AI"
+LAYOUT_STATE_VERSION = 1
 
 # --- CORE BRIDGE ---
 class AIBridge(QObject):
@@ -265,18 +266,34 @@ def make_linkedin_icon(size=18):
     return QIcon(QPixmap.fromImage(qimg))
 
 def make_attachment_icon(size=20, color_hex="#facc15"):
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    s = size / 20
-    color = color_hex
-    width = max(2, int(2*s))
-    draw.arc([5*s, 2*s, 16*s, 14*s], start=95, end=345, fill=color, width=width)
-    draw.arc([3*s, 5*s, 15*s, 19*s], start=105, end=350, fill=color, width=width)
-    draw.arc([7*s, 5*s, 13*s, 13*s], start=95, end=350, fill=color, width=width)
-    draw.line([10*s, 6*s, 6*s, 13*s], fill=color, width=width)
-    data = img.tobytes("raw", "RGBA")
-    qimg = QImage(data, size, size, QImage.Format_RGBA8888)
-    return QIcon(QPixmap.fromImage(qimg))
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    pen = QPen(QColor(color_hex))
+    pen.setWidthF(max(2.0, size * 0.12))
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    painter.setPen(pen)
+
+    s = size / 24
+    path = QPainterPath()
+    path.moveTo(15.6 * s, 6.0 * s)
+    path.cubicTo(18.5 * s, 8.9 * s, 18.5 * s, 13.4 * s, 15.6 * s, 16.3 * s)
+    path.lineTo(11.1 * s, 20.8 * s)
+    path.cubicTo(8.6 * s, 23.3 * s, 4.6 * s, 23.3 * s, 2.2 * s, 20.8 * s)
+    path.cubicTo(-0.2 * s, 18.4 * s, -0.2 * s, 14.4 * s, 2.2 * s, 12.0 * s)
+    path.lineTo(11.0 * s, 3.2 * s)
+    path.cubicTo(13.0 * s, 1.2 * s, 16.2 * s, 1.2 * s, 18.2 * s, 3.2 * s)
+    path.cubicTo(20.2 * s, 5.2 * s, 20.2 * s, 8.4 * s, 18.2 * s, 10.4 * s)
+    path.lineTo(9.4 * s, 19.2 * s)
+    path.cubicTo(8.3 * s, 20.3 * s, 6.5 * s, 20.3 * s, 5.4 * s, 19.2 * s)
+    path.cubicTo(4.3 * s, 18.1 * s, 4.3 * s, 16.3 * s, 5.4 * s, 15.2 * s)
+    path.lineTo(13.5 * s, 7.1 * s)
+    painter.drawPath(path)
+    painter.end()
+    return QIcon(pixmap)
 
 class CodeHighlighter(QSyntaxHighlighter):
     def __init__(self, document, language):
@@ -376,6 +393,8 @@ class ReadyDualAI(QMainWindow):
         self.auto_approve = self.engine.config.get("auto_approve", False)
         self.setWindowTitle(APP_WINDOW_TITLE)
         self.resize(1360, 860)
+        self.layout_state_path = os.path.join(SCRIPT_DIR, "layout_state.json")
+        self.default_layout_state = None
         self.default_dataset_path = os.path.join(SCRIPT_DIR, "datasets", "ready_dual_tools.jsonl")
         self.pending_attachments = []
         
@@ -383,6 +402,7 @@ class ReadyDualAI(QMainWindow):
         self.ACCENT_YELLOW = "#facc15"
         self.ACCENT_CYAN = "#22d3ee"
         self.ACCENT_EMERALD = "#10b981"
+        self.ACCENT_ORANGE = "#f97316"
         self.ACCENT_ROSE = "#f43f5e"
         
         # Bridge & Engine
@@ -402,6 +422,8 @@ class ReadyDualAI(QMainWindow):
         self.loader.start()
         
         self.init_ui()
+        self.capture_default_layout()
+        self.restore_saved_layout()
         self.populate_history()
         self.setStyleSheet(QSS_THEME)
 
@@ -669,6 +691,7 @@ class ReadyDualAI(QMainWindow):
         self.hist_scroll.setWidget(self.hist_cont); self.hist_scroll.setWidgetResizable(True); side_v.addWidget(self.hist_scroll)
 
         self.sidebar_dock = QDockWidget("TOOLS", self); self.sidebar_dock.setWidget(self.sidebar_pane)
+        self.sidebar_dock.setObjectName("DockTools")
         self.sidebar_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.sidebar_dock)
         
@@ -676,6 +699,7 @@ class ReadyDualAI(QMainWindow):
         self.console_pane = self.build_mono_pane("📟 TOOL CONSOLE", self.ACCENT_EMERALD, "PaneConsole", "PaneConsoleText")
         self.console_edit = self.console_pane.findChild(QPlainTextEdit)
         self.console_dock = QDockWidget("TOOL CONSOLE", self); self.console_dock.setWidget(self.console_pane)
+        self.console_dock.setObjectName("DockToolConsole")
         self.console_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.splitDockWidget(self.sidebar_dock, self.console_dock, Qt.Horizontal)
         
@@ -692,11 +716,12 @@ class ReadyDualAI(QMainWindow):
         inp_h = QHBoxLayout(); inp_h.setContentsMargins(10,10,10,0); ibox = QFrame(); ibox.setStyleSheet("background:#0f0f0f; border:1px solid #1a1a1a; border-radius:6px;")
         ibox_h = QHBoxLayout(ibox); self.input = QLineEdit(); self.input.setPlaceholderText("Instruct the Manager..."); self.input.setStyleSheet("border:none;"); self.input.returnPressed.connect(self.send_message)
         ibox_h.addWidget(self.input, 1); self.send_btn = QPushButton("➤"); self.send_btn.setObjectName("ControlBtn"); self.send_btn.setStyleSheet(f"color:{self.ACCENT_YELLOW}; border:1px solid {self.ACCENT_YELLOW};"); self.send_btn.clicked.connect(self.send_message)
-        attach_btn = QPushButton(); attach_btn.setObjectName("ControlBtn"); attach_btn.setIcon(make_attachment_icon(20, self.ACCENT_YELLOW)); attach_btn.setIconSize(QSize(20, 20)); attach_btn.setToolTip("Attach file or image"); attach_btn.clicked.connect(self.attach_files)
+        attach_btn = QPushButton(); attach_btn.setObjectName("ControlBtn"); attach_btn.setIcon(make_attachment_icon(22, self.ACCENT_YELLOW)); attach_btn.setIconSize(QSize(22, 22)); attach_btn.setToolTip("Attach file or image"); attach_btn.clicked.connect(self.attach_files)
         ibox_h.addWidget(attach_btn); ibox_h.addWidget(self.send_btn); self.stop_btn = QPushButton("■"); self.stop_btn.setObjectName("ControlBtn"); self.stop_btn.setStyleSheet(f"color:{self.ACCENT_ROSE}; border:1px solid {self.ACCENT_ROSE};"); self.stop_btn.clicked.connect(self.stop_generation)
         ibox_h.addWidget(self.stop_btn); cp_v.addLayout(inp_h); inp_h.addWidget(ibox)
         
         self.chat_dock = QDockWidget("MANAGER CHAT", self); self.chat_dock.setWidget(self.chat_pane)
+        self.chat_dock.setObjectName("DockManagerChat")
         self.chat_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.splitDockWidget(self.console_dock, self.chat_dock, Qt.Horizontal)
         
@@ -704,6 +729,7 @@ class ReadyDualAI(QMainWindow):
         self.canvas_pane = self.build_mono_pane("</> CANVAS", self.ACCENT_CYAN, "PaneCanvas", "PaneCanvasText")
         self.canvas_edit = self.canvas_pane.findChild(QPlainTextEdit)
         self.canvas_dock = QDockWidget("EXPERT CANVAS", self); self.canvas_dock.setWidget(self.canvas_pane)
+        self.canvas_dock.setObjectName("DockExpertCanvas")
         self.canvas_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.splitDockWidget(self.chat_dock, self.canvas_dock, Qt.Horizontal)
         
@@ -748,6 +774,9 @@ class ReadyDualAI(QMainWindow):
 
     def init_menu(self):
         menubar = self.menuBar()
+        layout_m = menubar.addMenu("Layout")
+        reset_layout_action = layout_m.addAction("Reset Layout to Default")
+        reset_layout_action.triggered.connect(self.reset_layout_to_default)
         help_m = menubar.addMenu("Help")
         about_action = help_m.addAction(f"About {APP_NAME}")
         about_action.triggered.connect(lambda: webbrowser.open("https://github.com/ReadyZer0/Ready-Agentic-LLM"))
@@ -757,6 +786,43 @@ class ReadyDualAI(QMainWindow):
         donate_action.triggered.connect(self.show_support_dialog)
         guide_action = help_m.addAction("Tool Documentation")
         guide_action.triggered.connect(self.show_tool_guide)
+
+    def capture_default_layout(self):
+        self.default_layout_state = QByteArray(self.saveState(LAYOUT_STATE_VERSION))
+
+    def save_layout_state(self):
+        data = {
+            "version": LAYOUT_STATE_VERSION,
+            "state": bytes(self.saveState(LAYOUT_STATE_VERSION)).hex(),
+        }
+        try:
+            with open(self.layout_state_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as exc:
+            if hasattr(self, "console_edit"):
+                self.add_log(f"[SYSTEM] Layout auto-save failed: {exc}")
+
+    def restore_saved_layout(self):
+        if not os.path.exists(self.layout_state_path):
+            return
+        try:
+            with open(self.layout_state_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("version") != LAYOUT_STATE_VERSION:
+                return
+            state = data.get("state", "")
+            if state and not self.restoreState(QByteArray(bytes.fromhex(state)), LAYOUT_STATE_VERSION):
+                self.add_log("[SYSTEM] Saved layout could not be restored; using default layout.")
+        except Exception as exc:
+            self.add_log(f"[SYSTEM] Saved layout could not be loaded: {exc}")
+
+    def reset_layout_to_default(self):
+        if self.default_layout_state:
+            self.restoreState(self.default_layout_state, LAYOUT_STATE_VERSION)
+        for dock in getattr(self, "dock_widgets", []):
+            dock.setVisible(True)
+        self.save_layout_state()
+        self.add_log("[SYSTEM] Layout reset to default.")
 
     def createPopupMenu(self):
         menu = QMenu(self)
@@ -1296,14 +1362,17 @@ If both are off, the app tells the user neither model can process images.
             self.mgr_st.setText(f"● MANAGER: {t}")
             self.mgr_st.setStyleSheet(f"color: {color}")
         elif target == "coder": 
-            color = "#64748b" # STANDBY
-            if t in ["WORKING", "WRITING", "TOOLING"]: color = self.ACCENT_CYAN
+            color = "#64748b" if "STANDBY" in t else self.ACCENT_ORANGE
             self.cdr_st.setText(f"● CODER: {t}")
             self.cdr_st.setStyleSheet(f"color: {color}")
 
     @Slot(str, str, str)
     def update_canvas(self, title, content, path):
         self.canvas_edit.setPlainText(content)
+
+    def closeEvent(self, event):
+        self.save_layout_state()
+        super().closeEvent(event)
 
 if __name__ == "__main__":
     if sys.platform.startswith("win"):
